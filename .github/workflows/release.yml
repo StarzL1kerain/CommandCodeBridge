@@ -1,0 +1,232 @@
+name: Build and release plugins
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - 'v*'
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  metadata:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check plugin and registry versions
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(jq -r '.plugins[0].version' marketplace/registry.json)"
+          test -n "$version"
+          test "$version" != null
+          jq -e '.schema_version == 1 and .plugins[0].id == "commandcodebridge" and .plugins[0].install.type == "github-release"' marketplace/registry.json
+          grep -Fqx "const Version = \"$version\"" internal/bridge/types.go
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            test "$GITHUB_REF_NAME" = "v$version"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  linux-amd64:
+    needs: metadata
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test on Debian 12
+        run: |
+          docker run --rm --platform linux/amd64 -v "$PWD:/src" -w /src \
+            -e CGO_ENABLED=1 -e GOOS=linux -e GOARCH=amd64 \
+            golang:1.26-bookworm go test ./internal/bridge
+      - name: Build Debian 12 shared library
+        run: docker build --platform linux/amd64 --file Dockerfile.build --output type=local,dest=dist .
+      - name: Package Linux amd64
+        shell: bash
+        run: |
+          set -euo pipefail
+          file dist/commandcodebridge.so | grep -q 'ELF 64-bit.*x86-64'
+          archive="dist/commandcodebridge_${{ needs.metadata.outputs.version }}_linux_amd64.zip"
+          zip -j "$archive" dist/commandcodebridge.so
+          test "$(unzip -Z1 "$archive")" = commandcodebridge.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-linux-amd64
+          path: dist/commandcodebridge_*.zip
+          if-no-files-found: error
+
+  linux-arm64:
+    needs: metadata
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test and build on Debian 12 arm64
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          docker run --rm --platform linux/arm64 -v "$PWD:/src" -w /src \
+            -e CGO_ENABLED=1 -e GOOS=linux -e GOARCH=arm64 \
+            golang:1.26-bookworm sh -ec \
+            'go test ./internal/bridge && go build -trimpath -buildvcs=false -buildmode=c-shared -ldflags="-s -w" -o dist/commandcodebridge.so ./cmd/codecbridge'
+      - name: Package Linux arm64
+        shell: bash
+        run: |
+          set -euo pipefail
+          file dist/commandcodebridge.so | grep -Eiq 'ELF 64-bit.*(aarch64|ARM)'
+          archive="dist/commandcodebridge_${{ needs.metadata.outputs.version }}_linux_arm64.zip"
+          zip -j "$archive" dist/commandcodebridge.so
+          test "$(unzip -Z1 "$archive")" = commandcodebridge.so
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-linux-arm64
+          path: dist/commandcodebridge_*.zip
+          if-no-files-found: error
+
+  darwin:
+    needs: metadata
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            goarch: amd64
+            machine: x86_64
+          - runner: macos-15
+            goarch: arm64
+            machine: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26'
+      - name: Test and build native macOS library
+        shell: bash
+        env:
+          CGO_ENABLED: '1'
+          GOOS: darwin
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          go test ./internal/bridge
+          mkdir -p dist
+          go build -trimpath -buildvcs=false -buildmode=c-shared -ldflags='-s -w' \
+            -o dist/commandcodebridge.dylib ./cmd/codecbridge
+      - name: Package macOS library
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(lipo -archs dist/commandcodebridge.dylib)" = '${{ matrix.machine }}'
+          archive="dist/commandcodebridge_${{ needs.metadata.outputs.version }}_darwin_${{ matrix.goarch }}.zip"
+          zip -j "$archive" dist/commandcodebridge.dylib
+          test "$(unzip -Z1 "$archive")" = commandcodebridge.dylib
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-darwin-${{ matrix.goarch }}
+          path: dist/commandcodebridge_*.zip
+          if-no-files-found: error
+
+  windows-amd64:
+    needs: metadata
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v7
+        with:
+          go-version: '1.26'
+      - uses: msys2/setup-msys2@v2
+        id: msys2
+        with:
+          msystem: UCRT64
+          update: true
+          install: mingw-w64-ucrt-x86_64-gcc
+      - name: Add MinGW compiler to PATH
+        shell: pwsh
+        run: |
+          $compilerDir = Join-Path '${{ steps.msys2.outputs.msys2-location }}' 'ucrt64\bin'
+          if (-not (Test-Path -LiteralPath (Join-Path $compilerDir 'gcc.exe'))) {
+            throw 'MinGW GCC was not installed'
+          }
+          Add-Content -LiteralPath $env:GITHUB_PATH -Value $compilerDir
+      - name: Test and build Windows library
+        shell: pwsh
+        env:
+          CGO_ENABLED: '1'
+          GOOS: windows
+          GOARCH: amd64
+          CC: gcc
+        run: |
+          gcc --version
+          go test ./internal/bridge
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          go build -trimpath -buildvcs=false -buildmode=c-shared -ldflags='-s -w' -o dist/commandcodebridge.dll ./cmd/codecbridge
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Package Windows amd64
+        shell: pwsh
+        run: |
+          $library = 'dist/commandcodebridge.dll'
+          $bytes = [IO.File]::ReadAllBytes((Resolve-Path $library).Path)
+          $offset = [BitConverter]::ToInt32($bytes, 0x3c)
+          if ([BitConverter]::ToUInt32($bytes, $offset) -ne 0x00004550 -or [BitConverter]::ToUInt16($bytes, $offset + 4) -ne 0x8664) {
+            throw 'Library is not a Windows amd64 PE file'
+          }
+          $archive = "dist/commandcodebridge_${{ needs.metadata.outputs.version }}_windows_amd64.zip"
+          Compress-Archive -LiteralPath $library -DestinationPath $archive
+          $zip = [IO.Compression.ZipFile]::OpenRead((Resolve-Path $archive).Path)
+          try {
+            if ($zip.Entries.Count -ne 1 -or $zip.Entries[0].FullName -ne 'commandcodebridge.dll') {
+              throw 'ZIP must contain commandcodebridge.dll at its root'
+            }
+          } finally {
+            $zip.Dispose()
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-windows-amd64
+          path: dist/commandcodebridge_*.zip
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v') && github.repository == 'xiao-qiu-qiu/CommandCodeBridge'
+    needs: [metadata, linux-amd64, linux-arm64, darwin, windows-amd64]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          merge-multiple: true
+          path: dist
+      - name: Verify all release archives and write checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          version='${{ needs.metadata.outputs.version }}'
+          for spec in linux_amd64:so linux_arm64:so darwin_amd64:dylib darwin_arm64:dylib windows_amd64:dll; do
+            platform="${spec%%:*}"
+            extension="${spec#*:}"
+            archive="commandcodebridge_${version}_${platform}.zip"
+            test -f "$archive"
+            test "$(unzip -Z1 "$archive")" = "commandcodebridge.$extension"
+          done
+          sha256sum commandcodebridge_*.zip > checksums.txt
+          sha256sum -c checksums.txt
+      - name: Publish GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/commandcodebridge_*.zip dist/checksums.txt --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$GITHUB_REF_NAME" dist/commandcodebridge_*.zip dist/checksums.txt --title "$GITHUB_REF_NAME" --generate-notes --repo "$GITHUB_REPOSITORY"
+          fi

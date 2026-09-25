@@ -1,0 +1,900 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="cpa-api-base" content="__PASSBRIDGE_API_BASE__">
+  <title>CommandCodeBridge · 管理</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
+      font-size: 14px;
+      line-height: 1.5;
+      --bg: #faf9f5; --surface: #fffdf9; --surface-2: #f0eee8; --ink: #2d2a26;
+      --muted: #6d6760; --line: #d5d2cb; --accent: #8b8680; --accent-hover: #7f7a74; --accent-ink: #fff;
+      --success: #087c54; --warn: #985d0a; --danger: #b8493a; --focus: #726d67;
+      --code-bg: #f0eee8; --shadow: 0 1px 2px rgba(0, 0, 0, .08);
+    }
+    :root[data-theme="white"] { --bg: #fff; --surface: #fff; --surface-2: #f6f6f6; --line: #d9d9d9; --code-bg: #f6f6f6; }
+    :root[data-theme="dark"] { color-scheme: dark; --bg: #151412; --surface: #1d1b18; --surface-2: #262320; --ink: #f6f4f1; --muted: #c9c3bb; --line: #4a453f; --accent: #8b8680; --accent-hover: #9a948e; --accent-ink: #fff; --success: #6ee7b7; --warn: #f2c77c; --danger: #f1a399; --focus: #a6a099; --code-bg: #262320; --shadow: 0 1px 3px rgba(0, 0, 0, .3); }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); }
+    button, input, select { font: inherit; }
+    button { cursor: pointer; }
+    button:disabled { cursor: not-allowed; opacity: .55; }
+    :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+    .shell { max-width: 1360px; margin: 0 auto; padding: 16px clamp(16px, 3vw, 40px) 56px; }
+    .topbar, .heading, .section-head, .toolbar, .pagination, .row-main, .detail-head, .field-line, .credential-row, .model-row { display: flex; align-items: center; gap: 12px; }
+    .topbar { min-height: 32px; }
+    .brand { display: flex; align-items: center; gap: 11px; min-width: 0; font-weight: 700; font-size: 15px; }
+    .brandmark { width: 28px; height: 28px; display: grid; place-items: center; border-radius: 6px; background: var(--accent); color: #fff; font-size: 16px; font-weight: 800; flex: none; }
+    .brand span:last-child { overflow-wrap: anywhere; }
+    .version { color: var(--muted); font-size: 12px; white-space: nowrap; }
+    h1 { margin: 0; font-size: 20px; line-height: 1.3; letter-spacing: 0; }
+    h2 { margin: 0; font-size: 16px; line-height: 1.3; }
+    p { margin: 0; }
+    .button { min-height: 38px; padding: 7px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--surface-2); color: var(--ink); font-weight: 600; transition: border-color .16s, background .16s; white-space: nowrap; }
+    .button:hover:not(:disabled) { border-color: var(--accent); background: var(--code-bg); }
+    .button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+    .button.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+    .button.danger { background: #c65746; border-color: #c65746; color: #fff; }
+    .button.danger:hover:not(:disabled) { background: #ae4738; border-color: #ae4738; }
+    .button.compact { min-height: 32px; padding: 4px 9px; font-size: 12px; }
+    .button.icon { width: 38px; padding: 0; display: grid; place-items: center; font-size: 19px; line-height: 1; }
+    .button.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+    .button.ghost:hover { color: var(--ink); background: var(--surface-2); }
+    .badge { display: inline-flex; align-items: center; gap: 5px; min-height: 22px; padding: 2px 7px; border-radius: 4px; background: var(--code-bg); color: var(--muted); font-size: 11px; font-weight: 600; white-space: nowrap; }
+    .badge.good { background: color-mix(in srgb, var(--success) 12%, var(--surface)); color: var(--success); }
+    .badge.warn { background: color-mix(in srgb, var(--warn) 14%, var(--surface)); color: var(--warn); }
+    .badge.bad { background: color-mix(in srgb, var(--danger) 12%, var(--surface)); color: var(--danger); }
+    .summary-scope { color: var(--muted); font-size: 12px; margin: 2px 0 10px; }
+    .summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--surface); }
+    .summary-item { padding: 12px 16px; min-width: 0; }
+    .summary-item + .summary-item { border-left: 1px solid var(--line); }
+    .summary-label { font-size: 11px; color: var(--muted); margin-bottom: 3px; }
+    .summary-value { font-weight: 700; font-size: 17px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+    .summary-note { color: var(--muted); font-size: 11px; margin-top: 2px; overflow-wrap: anywhere; }
+    .summary + .log-head { margin-top: 18px; }
+    .notice { margin: 14px 0 0; padding: 10px 13px; border: 1px solid color-mix(in srgb, var(--warn) 30%, var(--line)); border-left: 3px solid var(--warn); border-radius: 4px; color: var(--ink); background: color-mix(in srgb, var(--warn) 7%, var(--surface)); }
+    .notice.error { border-color: color-mix(in srgb, var(--danger) 30%, var(--line)); border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 7%, var(--surface)); }
+    .notice[hidden], [hidden] { display: none !important; }
+    .tabs { display: flex; gap: 24px; margin-top: 10px; border-bottom: 1px solid var(--line); }
+    .tab { border: 0; background: none; color: var(--muted); padding: 0 2px 11px; border-bottom: 2px solid transparent; font-weight: 600; }
+    .tab[aria-selected="true"] { color: var(--accent); border-color: var(--accent); }
+    .section-head { justify-content: space-between; margin: 20px 0 14px; }
+    .toolbar { flex-wrap: wrap; margin-bottom: 14px; }
+    .control { height: 38px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); padding: 7px 10px; min-width: 0; }
+    .control::placeholder { color: var(--muted); }
+    .search { width: min(330px, 100%); flex: 1 1 220px; }
+    .toolbar .dropdown { flex: 0 1 155px; }
+    .count { margin-left: auto; color: var(--muted); white-space: nowrap; font-size: 12px; }
+    .log-head { display: grid; grid-template-columns: minmax(145px, 1.1fr) minmax(180px, 1.45fr) minmax(90px, .6fr) minmax(170px, 1.35fr) minmax(112px, .8fr) minmax(128px, .9fr) 26px; gap: 16px; padding: 0 15px 9px; color: var(--muted); font-size: 11px; font-weight: 700; }
+    .log-list { display: grid; gap: 10px; }
+    .log-entry { border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--surface); }
+    .log-entry[open] { background: var(--surface-2); box-shadow: inset 3px 0 var(--accent); }
+    .log-entry > summary { list-style: none; cursor: pointer; }
+    .log-entry > summary::-webkit-details-marker { display: none; }
+    .row-main { display: grid; grid-template-columns: minmax(145px, 1.1fr) minmax(180px, 1.45fr) minmax(90px, .6fr) minmax(170px, 1.35fr) minmax(112px, .8fr) minmax(128px, .9fr) 26px; gap: 16px; padding: 14px 15px; align-items: start; }
+    .row-main:hover { background: color-mix(in srgb, var(--accent) 3%, var(--surface)); }
+    .cell { min-width: 0; overflow-wrap: anywhere; }
+    .cell-label { display: none; color: var(--muted); font-size: 11px; }
+    .primary-text { font-weight: 650; }
+    .subtext { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .mono, code { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
+    .mono { font-size: 12px; }
+    .chevron { color: var(--muted); font-size: 18px; line-height: 1; transform: rotate(0); transition: transform .16s; }
+    details[open] .chevron { transform: rotate(90deg); }
+    .detail { border-top: 1px solid var(--line); padding: 15px 18px; }
+    .detail-head { align-items: flex-start; justify-content: space-between; margin-bottom: 12px; }
+    .detail-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 20px; }
+    .datum-label { color: var(--muted); font-size: 11px; margin-bottom: 2px; }
+    .datum-value { overflow-wrap: anywhere; font-size: 12px; }
+    .source { display: inline-block; background: var(--code-bg); border-radius: 3px; padding: 1px 4px; }
+    .attempts { margin-top: 17px; border-top: 1px solid var(--line); padding-top: 13px; }
+    .attempt { display: grid; grid-template-columns: 36px minmax(86px, .7fr) minmax(100px, 1fr) minmax(50px, .45fr) minmax(180px, 2fr); gap: 10px; border-bottom: 1px solid var(--line); padding: 9px 0; font-size: 12px; align-items: start; }
+    .attempt:last-child { border: 0; }
+    .error-text { color: var(--danger); overflow-wrap: anywhere; white-space: pre-wrap; }
+    .pagination { justify-content: flex-end; margin-top: 14px; color: var(--muted); font-size: 12px; }
+    .empty { padding: 48px 20px; text-align: center; color: var(--muted); }
+    .empty strong { display: block; color: var(--ink); font-size: 14px; margin-bottom: 4px; }
+    .config-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 24px; }
+    .panel { min-width: 0; border-top: 1px solid var(--line); padding-top: 15px; }
+    .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .panel-hint { color: var(--muted); font-size: 12px; margin-top: 3px; }
+    .model-row { justify-content: space-between; border-bottom: 1px solid var(--line); padding: 11px 0; min-width: 0; }
+    .model-row:last-child { border-bottom: none; }
+    #credentialList { display: grid; gap: 10px; }
+    .credential-row { justify-content: space-between; border: 1px solid var(--line); border-radius: 6px; padding: 14px; min-width: 0; background: var(--surface); }
+    .model-main, .credential-main { min-width: 0; overflow-wrap: anywhere; }
+    .row-actions { display: flex; gap: 5px; flex: none; }
+    .tagline { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 5px; }
+    .form-stack { display: grid; gap: 12px; margin-top: 15px; }
+    .field { display: grid; gap: 5px; min-width: 0; }
+    .field label { color: var(--muted); font-size: 12px; font-weight: 600; }
+    .field .control { width: 100%; }
+    .field-line { align-items: end; justify-content: space-between; }
+    .field-line .field { flex: 1; }
+    .form-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+    .config-meta { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 14px; }
+    .config-meta > div { padding: 10px 0; border-top: 1px solid var(--line); }
+    .inline-state { color: var(--muted); font-size: 12px; min-height: 18px; margin-top: 8px; }
+    dialog { max-width: min(420px, calc(100vw - 32px)); width: 100%; border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 20px 60px rgba(0,0,0,.22); background: var(--surface); color: var(--ink); padding: 24px; }
+    dialog::backdrop { background: rgba(18, 29, 35, .52); }
+    dialog h2 { margin-bottom: 6px; }
+    dialog p { color: var(--muted); font-size: 12px; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
+    .candidate-dialog { max-width: min(620px, calc(100vw - 32px)); }
+    .candidate-tools { display: flex; gap: 8px; align-items: center; margin: 18px 0 10px; }
+    .candidate-tools .control { flex: 1; }
+    .candidate-list { max-height: min(52vh, 480px); overflow-y: auto; border: 1px solid var(--line); border-radius: 6px; }
+    .candidate-row { display: flex; align-items: center; gap: 12px; padding: 11px 12px; cursor: pointer; min-width: 0; }
+    .candidate-row + .candidate-row { border-top: 1px solid var(--line); }
+    .candidate-row:hover { background: var(--surface-2); }
+    .candidate-row:has(input:disabled) { cursor: default; opacity: .65; }
+    .candidate-row input { width: 18px; height: 18px; accent-color: var(--accent); flex: none; }
+    .candidate-row .model-main { flex: 1; }
+    .candidate-empty { padding: 22px 12px; text-align: center; color: var(--muted); }
+    .inline-state:empty { display: none; }
+    .fetch-models { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 34px; margin: 16px 0 4px; padding: 5px 12px; font-weight: 500; }
+    .dropdown { position: relative; min-width: 0; }
+    .dropdown > .control { width: 100%; padding-right: 32px; text-align: left; }
+    .dropdown-trigger { display: flex; align-items: center; font-weight: 400; }
+    .dropdown-arrow { position: absolute; right: 11px; top: 50%; width: 8px; height: 8px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: translateY(-70%) rotate(45deg); pointer-events: none; color: var(--muted); }
+    .dropdown-menu { position: fixed; inset: auto; margin: 0; padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); color: var(--ink); box-shadow: 0 8px 24px rgba(0,0,0,.13); overflow-y: auto; overscroll-behavior: contain; }
+    .dropdown-option { padding: 9px 11px; border-radius: 7px; cursor: pointer; overflow-wrap: anywhere; line-height: 1.5; }
+    .dropdown-option:hover, .dropdown-option.active { background: var(--surface-2); }
+    .dropdown-option[aria-selected="true"] { background: color-mix(in srgb, var(--accent) 20%, var(--surface)); font-weight: 600; }
+    .dropdown-empty { padding: 9px 11px; color: var(--muted); }
+    .toast { position: fixed; right: 18px; bottom: 18px; max-width: min(420px, calc(100vw - 36px)); border: 1px solid var(--line); border-radius: 6px; padding: 10px 13px; background: var(--ink); color: var(--surface); box-shadow: var(--shadow); z-index: 10; }
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme]) { color-scheme: dark; --bg: #151412; --surface: #1d1b18; --surface-2: #262320; --ink: #f6f4f1; --muted: #c9c3bb; --line: #4a453f; --accent: #8b8680; --accent-hover: #9a948e; --accent-ink: #fff; --success: #6ee7b7; --warn: #f2c77c; --danger: #f1a399; --focus: #a6a099; --code-bg: #262320; --shadow: 0 1px 3px rgba(0,0,0,.3); }
+    }
+    @media (max-width: 1000px) {
+      .log-head { display: none; }
+      .log-list { margin-top: 16px; }
+      .row-main { grid-template-columns: repeat(3, minmax(0, 1fr)) 20px; }
+      .row-main .cell:nth-child(4), .row-main .cell:nth-child(5), .row-main .cell:nth-child(6) { grid-row: 2; }
+      .row-main .cell:nth-child(4) { grid-column: 1; }
+      .row-main .cell:nth-child(5) { grid-column: 2; }
+      .row-main .cell:nth-child(6) { grid-column: 3; }
+      .row-main .chevron { grid-column: 4; grid-row: 1; }
+      .cell-label { display: block; margin-bottom: 2px; }
+    }
+    @media (max-width: 740px) {
+      .shell { padding-top: 16px; }
+      .config-grid { grid-template-columns: 1fr; }
+      .summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .summary-item:nth-child(3) { border-left: 0; }
+      .summary-item:nth-child(n+3) { border-top: 1px solid var(--line); }
+      .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .attempt { grid-template-columns: 24px minmax(80px, 1fr) minmax(80px, 1fr); }
+      .attempt > :nth-child(4), .attempt > :nth-child(5) { grid-column: 2 / -1; }
+    }
+    @media (max-width: 480px) {
+      .summary-item { padding: 11px; }
+      .toolbar { gap: 8px; }
+      .toolbar .dropdown { flex: 1 1 calc(50% - 4px); }
+      .toolbar .button { flex: 1 1 100%; }
+      .count { margin-left: 0; }
+      .row-main { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 18px; gap: 10px; padding: 13px; }
+      .row-main .cell:nth-child(1) { grid-column: 1; grid-row: 1; }
+      .row-main .cell:nth-child(3) { grid-column: 2; grid-row: 1; }
+      .row-main .cell:nth-child(2) { grid-column: 1 / 3; grid-row: 2; }
+      .row-main .cell:nth-child(4) { grid-column: 1 / 3; grid-row: 3; }
+      .row-main .cell:nth-child(5) { grid-column: 1; grid-row: 4; }
+      .row-main .cell:nth-child(6) { grid-column: 2; grid-row: 4; }
+      .row-main .chevron { grid-column: 3; grid-row: 1; }
+      .detail-grid { grid-template-columns: 1fr; }
+      .field-line { display: grid; }
+      .pagination { justify-content: space-between; }
+      .topbar { gap: 6px; }
+      .brand { font-size: 13px; }
+      .credential-row { align-items: flex-start; flex-wrap: wrap; }
+      .candidate-tools { flex-wrap: wrap; }
+      .candidate-tools .control { flex-basis: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="topbar">
+      <div class="brand"><span class="brandmark" aria-hidden="true">C</span><span>CommandCodeBridge</span></div>
+    </div>
+    <div class="notice error" id="logPersistenceError" role="alert" hidden></div>
+    <div class="notice error" id="globalError" role="alert" hidden></div>
+
+    <div class="tabs" role="tablist" aria-label="管理视图">
+      <button class="tab" id="logsTab" role="tab" aria-selected="true" aria-controls="logsPanel" type="button">请求日志</button>
+      <button class="tab" id="configTab" role="tab" aria-selected="false" aria-controls="configPanel" type="button">配置概览</button>
+    </div>
+
+    <section id="logsPanel" role="tabpanel" aria-labelledby="logsTab">
+      <div class="section-head"><h2>最近请求</h2><button class="button compact" id="refreshLogs" type="button">刷新日志</button></div>
+      <div class="toolbar">
+        <input class="control search" id="search" type="search" placeholder="搜索模型、渠道或错误" aria-label="搜索请求日志">
+        <select class="control" id="statusFilter" aria-label="按状态筛选"><option value="">全部状态</option><option value="success">成功</option><option value="error">失败</option></select>
+        <input class="control provider-filter" id="providerFilter" placeholder="实际渠道" aria-label="按实际渠道筛选" autocomplete="off">
+        <span class="count" id="logCount">-- 条</span>
+      </div>
+      <p class="summary-scope">当前筛选 · 全部保留日志，不限当前页</p>
+      <div class="summary" aria-label="当前筛选的日志统计">
+        <div class="summary-item"><div class="summary-label">请求数</div><div class="summary-value" id="statRequests">--</div><div class="summary-note">当前筛选</div></div>
+        <div class="summary-item"><div class="summary-label">输入 tokens</div><div class="summary-value" id="statPromptTokens">--</div><div class="summary-note">全部保留请求</div></div>
+        <div class="summary-item"><div class="summary-label">输出 tokens</div><div class="summary-value" id="statCompletionTokens">--</div><div class="summary-note">全部保留请求</div></div>
+        <div class="summary-item"><div class="summary-label">输入缓存率</div><div class="summary-value" id="statCacheRate">--</div><div class="summary-note" id="statCachedTokens">缓存 tokens --</div></div>
+      </div>
+      <div class="log-head" aria-hidden="true"><span>时间 / 请求</span><span>客户端模型 / 上游</span><span>结果</span><span>实际上游</span><span>延时</span><span>用量</span><span></span></div>
+      <div class="log-list" id="logList" aria-live="polite"><div class="empty">正在读取日志…</div></div>
+      <div class="pagination"><button class="button compact" id="prevPage" type="button">上一页</button><span id="pageInfo">第 1 页</span><button class="button compact" id="nextPage" type="button">下一页</button></div>
+    </section>
+
+    <section id="configPanel" role="tabpanel" aria-labelledby="configTab" hidden>
+      <div class="section-head"><h2>插件配置</h2></div>
+      <div class="config-grid">
+        <div class="panel">
+          <div class="panel-head"><div><h2>模型映射</h2><p class="panel-hint">客户端名称与 Command Code 上游模型</p></div><div class="row-actions"><button class="button compact primary" id="openModel" type="button">添加模型</button></div></div>
+          <div id="modelList" aria-live="polite"><div class="empty">正在读取模型…</div></div>
+          <p class="inline-state" id="modelState"></p>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div><h2>凭据</h2><p class="panel-hint">仅显示名称和配置状态</p></div><button class="button compact primary" id="openCredential" type="button">添加凭据</button></div>
+          <div id="credentialList" aria-live="polite"><div class="empty">正在读取凭据…</div></div>
+          <p class="inline-state" id="credentialState"></p>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div><h2>请求与日志设置</h2><p class="panel-hint">仅影响本插件</p></div></div>
+          <form class="form-stack" id="settingsForm">
+            <div class="field"><label for="nonstreamMode">非流式处理</label><select class="control" id="nonstreamMode"><option value="native">原生非流式</option><option value="native-fallback">原生优先，必要时聚合流式</option><option value="stream-aggregate">直接聚合流式（推荐）</option></select></div>
+            <div class="field"><label for="timeoutSeconds">请求超时（秒）</label><input class="control" id="timeoutSeconds" type="number" min="10" max="1800" step="1" required></div>
+            <div class="field"><label for="logRetention">日志保留条数</label><input class="control" id="logRetention" type="number" min="50" max="10000" step="1" required></div>
+            <div class="form-foot"><button class="button primary" id="saveSettings" type="submit">保存设置</button></div>
+          </form>
+          <p class="inline-state" id="settingsState"></p>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><div><h2>CPA 管理鉴权（兜底）</h2><p class="panel-hint">用于读取日志和修改插件配置。正常会复用 CPA 登录，无需操作；仅在登录未被识别或鉴权失败时手动输入 CPA 管理密钥。</p></div></div>
+          <div class="field-line"><span class="version" id="version">版本 --</span><button class="button compact" id="authButton" type="button">管理密钥</button></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="authDialog" aria-labelledby="authTitle">
+    <h2 id="authTitle">CPA 管理鉴权（兜底）</h2>
+    <p>正常无需设置。优先在 CPA 管理页登录并选择“记住密码”；若插件仍提示鉴权失败，可在此临时输入 CPA 管理密钥，仅保留在当前页面内存中。</p>
+    <form id="authForm" class="form-stack" method="dialog" autocomplete="off">
+      <div class="field"><label for="authType">请求头</label><select class="control" id="authType"><option value="bearer">Authorization: Bearer</option><option value="x-management-key">X-Management-Key</option></select></div>
+      <div class="field"><label for="authKey">CPA 管理密钥</label><input class="control" id="authKey" type="password" autocomplete="new-password" placeholder="粘贴CPA管理密钥"></div>
+      <div class="dialog-actions"><button class="button danger" id="clearAuth" type="button">清除密钥</button><button class="button" id="closeAuth" type="button">取消</button><button class="button primary" type="submit">应用</button></div>
+    </form>
+  </dialog>
+  <dialog id="modelDialog" aria-labelledby="modelFormTitle">
+    <h2 id="modelFormTitle">添加模型映射</h2>
+    <button class="button fetch-models" id="refreshModels" type="button"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M6.1 6.1A8 8 0 0 1 20 12M4 12a8 8 0 0 0 13.9 5.9"/></svg><span>获取上游模型</span></button>
+    <form class="form-stack" id="modelForm" autocomplete="off">
+      <div class="field"><label for="modelId">客户端模型名称</label><input class="control mono" id="modelId" required placeholder="例如 deepseek-v4-flash" autocomplete="off"></div>
+      <div class="field"><label for="upstreamId">Command Code 上游模型</label><input class="control mono" id="upstreamId" required placeholder="例如 deepseek/deepseek-v4-flash" autocomplete="off"></div>
+      <p class="inline-state" id="modelDialogState" role="alert"></p>
+      <div class="dialog-actions"><button class="button" id="cancelModelEdit" type="button">取消</button><button class="button primary" id="saveModel" type="submit">添加模型</button></div>
+    </form>
+  </dialog>
+  <dialog class="candidate-dialog" id="modelCandidateDialog" aria-labelledby="modelCandidateTitle">
+    <h2 id="modelCandidateTitle">选择上游模型</h2>
+    <p>勾选以添加，取消已有勾选以删除。仅同步名称与上游 ID 均匹配默认值的映射，自定义映射保持原样。</p>
+    <div class="candidate-tools"><input class="control" id="candidateSearch" type="search" placeholder="搜索模型" aria-label="搜索候选模型"><button class="button compact" id="selectCandidates" type="button">全选当前结果</button><button class="button compact" id="clearCandidates" type="button">清空当前勾选</button></div>
+    <div class="candidate-list" id="candidateList" aria-live="polite"></div>
+    <p class="inline-state" id="candidateState" role="status"></p>
+    <div class="dialog-actions"><button class="button" id="cancelCandidates" type="button">取消</button><button class="button primary" id="confirmCandidates" type="button" disabled>应用更改</button></div>
+  </dialog>
+  <dialog id="credentialDialog" aria-labelledby="credentialDialogTitle">
+    <h2 id="credentialDialogTitle">添加凭据</h2>
+    <p id="credentialDialogHint">在 Studio（commandcode.ai/studio → API Keys）创建后粘贴 API Key；保存时会自动校验有效性并抓取用户名。</p>
+    <form class="form-stack" id="credentialForm" autocomplete="off">
+      <div class="field"><label for="credentialLabel">名称</label><input class="control" id="credentialLabel" name="label" maxlength="80" required placeholder="例如：主账号"></div>
+      <div class="field"><label for="credentialKey">API Key</label><input class="control" id="credentialKey" name="api_key" type="password" autocomplete="new-password" required placeholder="输入新的 API Key"></div>
+      <p class="inline-state" id="credentialDialogState" role="alert"></p>
+      <div class="dialog-actions"><button class="button" id="cancelCredential" type="button">取消</button><button class="button primary" id="saveCredential" type="submit">添加凭据</button></div>
+    </form>
+  </dialog>
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script>
+    /*__CPA_AUTH_COMPAT__*/
+    'use strict';
+    const API_BASE = '__PASSBRIDGE_API_BASE__';
+    const PAGE_SIZE = 50;
+    const $ = (id) => document.getElementById(id);
+    const state = { key: '', authType: 'bearer', page: 0, total: 0, logsController: null, providers: new Set(), models: [], editingModelIndex: -1, modelBusy: false, config: null, toastTimer: 0, modelCandidates: [], selectedCandidates: new Set(), candidateBusy: false, candidateSnapshot: [], fetchingModels: false, editingCredentialId: '', credentialBusy: false };
+    function applyTheme(value) {
+      document.documentElement.dataset.theme = value === 'dark' || value === 'white' ? value : 'light';
+    }
+    function syncTheme() {
+      try {
+        if (window.parent !== window) {
+          document.documentElement.classList.add('embedded');
+          applyTheme(window.parent.document.documentElement.getAttribute('data-theme'));
+          return true;
+        }
+      } catch { if (window.parent !== window) document.documentElement.classList.add('embedded'); }
+      try {
+        const saved = JSON.parse(localStorage.getItem('cli-proxy-theme') || '{}').state?.theme;
+        applyTheme(saved === 'auto' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'white') : saved);
+      } catch { applyTheme(null); }
+      return false;
+    }
+    if (syncTheme()) new MutationObserver(syncTheme).observe(window.parent.document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'style'] });
+    window.addEventListener('storage', (event) => { if (event.key === 'cli-proxy-theme') syncTheme(); });
+    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', syncTheme);
+    const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
+    const present = (value) => value !== null && value !== undefined && String(value).trim() !== '';
+    const shown = (value, fallback = '未记录') => present(value) ? esc(value) : fallback;
+    const number = (value) => Number.isFinite(Number(value)) && present(value) ? Number(value).toLocaleString('zh-CN') : '--';
+    const percent = (value) => value !== null && value !== undefined && Number.isFinite(Number(value)) && Number(value) >= 0 && Number(value) <= 1 ? `${(Number(value) * 100).toLocaleString('zh-CN', { maximumFractionDigits: 1 })}%` : '--';
+    const ms = (value) => Number.isFinite(Number(value)) && present(value) ? `${number(value)} ms` : '--';
+    const ttft = (log) => log.stream === true && Number.isFinite(Number(log.ttft_ms)) && Number(log.ttft_ms) > 0 ? ms(log.ttft_ms) : '—';
+    const apiReady = () => API_BASE && !API_BASE.includes('__PASSBRIDGE_');
+    const apiUrl = (path, query) => {
+      const base = new URL(API_BASE.replace(/\/?$/, '/'), location.origin);
+      const url = new URL(path.replace(/^\//, ''), base);
+      if (query) Object.entries(query).forEach(([key, value]) => { if (present(value)) url.searchParams.set(key, String(value)); });
+      return url;
+    };
+    const dropdowns = new Map();
+    function createDropdown(field, getItems, editable = false) {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'dropdown';
+      field.before(wrapper);
+      wrapper.append(field);
+      const trigger = editable ? field : document.createElement('button');
+      if (!editable) {
+        field.hidden = true;
+        trigger.type = 'button';
+        trigger.className = 'control dropdown-trigger';
+        trigger.id = `${field.id}Trigger`;
+        trigger.setAttribute('aria-label', field.getAttribute('aria-label') || document.querySelector(`label[for="${field.id}"]`)?.textContent || '选择');
+        const label = document.querySelector(`label[for="${field.id}"]`);
+        if (label) label.htmlFor = trigger.id;
+        wrapper.append(trigger);
+      }
+      trigger.setAttribute('role', 'combobox');
+      trigger.setAttribute('aria-haspopup', 'listbox');
+      trigger.setAttribute('aria-expanded', 'false');
+      if (editable) trigger.setAttribute('aria-autocomplete', 'list');
+      const arrow = document.createElement('span');
+      arrow.className = 'dropdown-arrow';
+      arrow.setAttribute('aria-hidden', 'true');
+      wrapper.append(arrow);
+      const menu = document.createElement('div');
+      menu.id = `${field.id}Options`;
+      menu.className = 'dropdown-menu';
+      menu.setAttribute('popover', 'auto');
+      menu.setAttribute('role', 'listbox');
+      menu.setAttribute('aria-label', trigger.getAttribute('aria-label'));
+      trigger.setAttribute('aria-controls', menu.id);
+      wrapper.append(menu);
+      let active = -1, items = [], typeAhead = '', typeTimer;
+      const isOpen = () => menu.matches(':popover-open');
+      function position() {
+        const rect = trigger.getBoundingClientRect();
+        const below = innerHeight - rect.bottom - 8;
+        const above = rect.top - 8;
+        const up = below < 180 && above > below;
+        menu.style.width = `${Math.min(Math.max(rect.width, 180), innerWidth - 16)}px`;
+        menu.style.maxHeight = `${Math.min(280, Math.max(60, up ? above : below))}px`;
+        menu.style.left = `${Math.max(8, Math.min(rect.left, innerWidth - menu.offsetWidth - 8))}px`;
+        menu.style.top = `${up ? Math.max(8, rect.top - menu.offsetHeight - 5) : rect.bottom + 5}px`;
+      }
+      function markActive() {
+        [...menu.children].forEach((item, index) => item.classList.toggle('active', index === active));
+        if (active >= 0 && menu.children[active]) {
+          trigger.setAttribute('aria-activedescendant', menu.children[active].id);
+          menu.children[active].scrollIntoView({ block: 'nearest' });
+        } else trigger.removeAttribute('aria-activedescendant');
+      }
+      function render(filter = false) {
+        const query = editable && filter ? field.value.toLowerCase() : '';
+        items = getItems().filter((item) => !query || !item.value || item.label.toLowerCase().includes(query));
+        menu.innerHTML = items.length ? items.map((item, index) => `<div class="dropdown-option" id="${menu.id}-${index}" role="option" aria-selected="${item.value === field.value}" data-index="${index}">${esc(item.label)}</div>`).join('') : '<div class="dropdown-empty">暂无匹配渠道</div>';
+        active = items.findIndex((item) => item.value === field.value);
+        markActive();
+        if (isOpen()) position();
+      }
+      function close() { if (isOpen()) menu.hidePopover(); }
+      function open(filter = false) {
+        render(filter);
+        if (!isOpen()) menu.showPopover();
+        trigger.setAttribute('aria-expanded', 'true');
+        position();
+      }
+      function sync() {
+        if (!editable) trigger.textContent = getItems().find((item) => item.value === field.value)?.label || '请选择';
+        if (isOpen()) render();
+      }
+      function choose(index) {
+        const item = items[index];
+        if (!item) return;
+        field.value = item.value;
+        sync(); close(); trigger.focus();
+        field.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      menu.addEventListener('pointerdown', (event) => event.preventDefault());
+      menu.addEventListener('click', (event) => { const option = event.target.closest('[data-index]'); if (option) choose(Number(option.dataset.index)); });
+      menu.addEventListener('toggle', () => {
+        trigger.setAttribute('aria-expanded', String(isOpen()));
+        if (!isOpen()) trigger.removeAttribute('aria-activedescendant');
+      });
+      trigger.addEventListener('click', () => { if (isOpen() && !editable) close(); else open(); });
+      if (editable) trigger.addEventListener('input', () => open(true));
+      field.addEventListener('change', sync);
+      trigger.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && isOpen()) { event.preventDefault(); event.stopPropagation(); close(); return; }
+        if (event.key === 'Tab') { close(); return; }
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          if (!isOpen()) { open(); if (active < 0) active = event.key === 'ArrowDown' ? 0 : items.length - 1; }
+          else active = (active + (event.key === 'ArrowDown' ? 1 : -1) + items.length) % items.length;
+          markActive();
+        } else if (event.key === 'Enter' || (!editable && event.key === ' ')) {
+          event.preventDefault();
+          if (isOpen() && active >= 0) choose(active); else if (editable) { close(); field.dispatchEvent(new Event('change', { bubbles: true })); } else open();
+        } else if (!editable && (event.key === 'Home' || event.key === 'End')) {
+          event.preventDefault(); if (!isOpen()) open(); active = event.key === 'Home' ? 0 : items.length - 1; markActive();
+        } else if (!editable && event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+          event.preventDefault(); if (!isOpen()) open(); clearTimeout(typeTimer); typeAhead += event.key.toLowerCase();
+          const index = items.findIndex((item) => item.label.toLowerCase().startsWith(typeAhead));
+          if (index >= 0) { active = index; markActive(); }
+          typeTimer = setTimeout(() => { typeAhead = ''; }, 700);
+        }
+      });
+      window.addEventListener('resize', close);
+      window.addEventListener('scroll', (event) => { if (!menu.contains(event.target)) close(); }, true);
+      const dialog = field.closest('dialog');
+      if (dialog) dialog.addEventListener('close', close);
+      sync();
+      return { sync };
+    }
+    for (const field of document.querySelectorAll('select')) dropdowns.set(field.id, createDropdown(field, () => [...field.options].map((option) => ({ value: option.value, label: option.textContent }))));
+    dropdowns.set('providerFilter', createDropdown($('providerFilter'), () => [{ value: '', label: '全部渠道' }, ...[...state.providers].sort((a, b) => a.localeCompare(b)).map((provider) => ({ value: provider, label: provider }))], true));
+    function toast(message) {
+      $('toast').textContent = message;
+      $('toast').hidden = false;
+      clearTimeout(state.toastTimer);
+      state.toastTimer = setTimeout(() => { $('toast').hidden = true; }, 3800);
+    }
+    function globalError(message) { $('globalError').textContent = message; $('globalError').hidden = !message; }
+    async function api(path, options = {}) {
+      if (!apiReady()) throw new Error('管理 API 路径尚未注入');
+      const headers = { Accept: 'application/json' };
+      if (options.body !== undefined) headers['Content-Type'] = 'application/json';
+      if (state.key) headers[state.authType === 'x-management-key' ? 'X-Management-Key' : 'Authorization'] = state.authType === 'x-management-key' ? state.key : `Bearer ${state.key}`;
+      if (!state.key && typeof window.PassBridgeAuthHeaders === 'function') {
+        const savedHeaders = await window.PassBridgeAuthHeaders();
+        Object.assign(headers, savedHeaders);
+        if (savedHeaders.Authorization) $('authButton').textContent = '使用 CPA 登录';
+      }
+      const response = await fetch(apiUrl(path, options.query), { method: options.method || 'GET', headers, body: options.body === undefined ? undefined : JSON.stringify(options.body), credentials: 'same-origin', cache: 'no-store', signal: options.signal });
+      if (!response.ok) {
+        if ((response.status === 401 || response.status === 403) && !$('authDialog').open) $('authDialog').showModal();
+        let detail = '';
+        try { const body = await response.json(); detail = body.error || body.message || ''; } catch { /* An HTML error page is possible. */ }
+        throw new Error(`HTTP ${response.status}${detail ? `：${String(detail).slice(0, 240)}` : ''}`);
+      }
+      if (response.status === 204) return null;
+      const text = await response.text();
+      return text ? JSON.parse(text) : null;
+    }
+    function formatTime(value) {
+      if (!present(value)) return '--';
+      const date = new Date(value);
+      return Number.isNaN(date.getTime()) ? esc(value) : esc(new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).format(date));
+    }
+    function statusInfo(raw) {
+      const value = String(raw ?? '').toLowerCase();
+      if (value === 'success' || value === 'ok' || /^2\d\d$/.test(value)) return { label: present(raw) && /^2\d\d$/.test(value) ? `HTTP ${esc(raw)}` : '成功', cls: 'good' };
+      if (value === 'error' || value === 'failed' || value === 'failure' || /^[45]\d\d$/.test(value)) return { label: present(raw) && /^[45]\d\d$/.test(value) ? `HTTP ${esc(raw)}` : '失败', cls: 'bad' };
+      return { label: shown(raw, '未知状态'), cls: 'warn' };
+    }
+    function actualProvider(value) {
+      const provider = String(value ?? '').trim();
+      return provider.toLowerCase() === 'unknown' ? '' : provider;
+    }
+    function datum(label, value, fallback = '未记录') { return `<div><div class="datum-label">${label}</div><div class="datum-value">${shown(value, fallback)}</div></div>`; }
+    function logMarkup(log) {
+      const status = statusInfo(log.status);
+      const actual = shown(actualProvider(log.provider), '未知');
+      const attempts = Array.isArray(log.attempts) ? log.attempts : [];
+      const attemptMarkup = attempts.length ? attempts.map((attempt, index) => {
+        const attemptStatus = statusInfo(attempt.status);
+        return `<div class="attempt"><span class="mono">${index + 1}.</span><span class="badge ${attemptStatus.cls}">${attemptStatus.label}</span><strong>${shown(actualProvider(attempt.provider), '未知')}</strong><span>${ms(attempt.duration_ms)}</span><span class="error-text">${shown(attempt.error, '—')}</span></div>`;
+      }).join('') : '<div class="subtext">无尝试明细</div>';
+      return `<details class="log-entry" data-id="${esc(log.id)}"><summary class="row-main">
+        <div class="cell"><span class="cell-label">时间 / 请求</span><div class="primary-text mono">${formatTime(log.time)}</div><div class="subtext mono">${shown(log.id, '无 ID')}</div></div>
+        <div class="cell"><span class="cell-label">客户端模型 / 上游</span><div class="primary-text mono">${shown(log.model)}</div><div class="subtext mono">${shown(log.upstream_model)}</div></div>
+        <div class="cell"><span class="cell-label">结果</span><span class="badge ${status.cls}">${status.label}</span><div class="subtext">${log.stream === true ? '流式' : log.stream === false ? '非流式' : '模式未知'}</div></div>
+        <div class="cell"><span class="cell-label">实际上游</span><div class="primary-text">${actual}</div></div>
+        <div class="cell"><span class="cell-label">延时 / 首字</span><div>${ms(log.duration_ms)}</div><div class="subtext">首字 ${ttft(log)}</div></div>
+        <div class="cell"><span class="cell-label">用量 / 尝试</span><div>${number(log.prompt_tokens)} / ${number(log.completion_tokens)}</div><div class="subtext">缓存 ${number(log.cached_tokens)} · ${attempts.length} 次</div></div>
+        <span class="chevron" aria-hidden="true">›</span></summary>
+        <div class="detail"><div class="detail-head"><strong>请求详情</strong></div>
+          <div class="detail-grid">
+            ${datum('实际上游', actualProvider(log.provider), '未知')}
+            ${datum('首字时间', ttft(log), '—')}
+            ${datum('总耗时', ms(log.duration_ms), '--')}
+            ${datum('输入 tokens', number(log.prompt_tokens), '--')}
+            ${datum('输出 tokens', number(log.completion_tokens), '--')}
+            ${datum('缓存 tokens', number(log.cached_tokens), '--')}
+          </div>
+          ${present(log.error) ? `<div class="attempts"><div class="datum-label">请求错误</div><div class="error-text">${esc(log.error)}</div></div>` : ''}
+          <div class="attempts"><strong>尝试明细 · ${attempts.length}</strong>${attemptMarkup}</div>
+        </div></details>`;
+    }
+    function renderProviderOptions() {
+      dropdowns.get('providerFilter').sync();
+    }
+    async function loadLogs() {
+      state.logsController?.abort();
+      state.logsController = new AbortController();
+      $('refreshLogs').disabled = true;
+      $('logList').innerHTML = '<div class="empty">正在读取日志…</div>';
+      for (const id of ['statRequests', 'statPromptTokens', 'statCompletionTokens', 'statCacheRate']) $(id).textContent = '--';
+      $('statCachedTokens').textContent = '缓存 tokens --';
+      try {
+        const data = await api('/logs', { query: { limit: PAGE_SIZE, offset: state.page * PAGE_SIZE, search: $('search').value.trim(), status: $('statusFilter').value, provider: $('providerFilter').value }, signal: state.logsController.signal });
+        const items = Array.isArray(data?.items) ? data.items : [];
+        const summary = data?.summary;
+        $('statRequests').textContent = number(summary?.requests);
+        $('statPromptTokens').textContent = number(summary?.prompt_tokens);
+        $('statCompletionTokens').textContent = number(summary?.completion_tokens);
+        $('statCacheRate').textContent = percent(summary?.cache_rate);
+        $('statCachedTokens').textContent = `缓存 tokens ${number(summary?.cached_tokens)}`;
+        state.total = Number.isFinite(Number(data?.total)) ? Number(data.total) : items.length;
+        for (const log of items) if (actualProvider(log.provider)) state.providers.add(actualProvider(log.provider));
+        renderProviderOptions();
+        $('logList').innerHTML = items.length ? items.map(logMarkup).join('') : '<div class="empty"><strong>没有匹配的请求</strong>调整筛选条件或稍后刷新</div>';
+        $('logCount').textContent = `${number(state.total)} 条`;
+        $('pageInfo').textContent = `第 ${state.page + 1} 页 · 共 ${Math.max(1, Math.ceil(state.total / PAGE_SIZE))} 页`;
+        $('prevPage').disabled = state.page === 0;
+        $('nextPage').disabled = (state.page + 1) * PAGE_SIZE >= state.total;
+        globalError('');
+      } catch (error) {
+        if (error.name === 'AbortError') return;
+        for (const id of ['statRequests', 'statPromptTokens', 'statCompletionTokens', 'statCacheRate']) $(id).textContent = '--';
+        $('statCachedTokens').textContent = '缓存 tokens --';
+        $('logList').innerHTML = `<div class="empty"><strong>日志读取失败</strong>${esc(error.message)}</div>`;
+        globalError(error.message);
+      } finally { $('refreshLogs').disabled = false; }
+    }
+    async function loadStatus() {
+      const data = await api('/status');
+      $('version').textContent = `版本 ${present(data?.version) ? data.version : '--'}`;
+      const persistenceError = present(data?.log_persistence_error) ? String(data.log_persistence_error) : '';
+      $('logPersistenceError').textContent = persistenceError ? `日志持久化失败：${persistenceError}。当前日志可能仅保留在内存中。` : '';
+      $('logPersistenceError').hidden = !persistenceError;
+    }
+    function resetModelForm() {
+      state.editingModelIndex = -1;
+      $('modelForm').reset();
+      $('modelFormTitle').textContent = '添加模型映射';
+      $('saveModel').textContent = '添加模型';
+      $('modelDialogState').textContent = '';
+      $('refreshModels').hidden = false;
+    }
+    function renderModels(data) {
+      state.models = Array.isArray(data?.models) ? data.models.map((model) => ({ id: model.id, upstream_id: model.upstream_id, providers: Array.isArray(model.providers) ? [...model.providers] : [] })) : [];
+      for (const model of state.models) for (const provider of model.providers) if (present(provider)) state.providers.add(String(provider));
+      renderProviderOptions();
+      $('modelList').innerHTML = state.models.length ? state.models.map((model, index) => `<div class="model-row"><div class="model-main"><div class="primary-text mono">${shown(model.id)}</div><div class="subtext mono">→ ${shown(model.upstream_id)}</div></div><div class="row-actions"><button class="button compact edit-model" type="button" data-index="${index}">编辑</button><button class="button compact danger delete-model" type="button" data-index="${index}">删除</button></div></div>`).join('') : '<div class="empty">暂无模型映射</div>';
+      if (state.editingModelIndex >= state.models.length) resetModelForm();
+      if ($('modelCandidateDialog').open) renderCandidateList();
+    }
+    async function saveModels(next) {
+      await api('/models', { method: 'PUT', body: { models: next } });
+      renderModels(await api('/models'));
+      await loadStatus();
+    }
+    const modelKey = (model) => JSON.stringify([model.id, model.upstream_id]);
+    function candidateChanges(models = state.candidateSnapshot) {
+      const initial = new Set(state.candidateSnapshot.map(modelKey));
+      const removed = new Set(state.modelCandidates.filter((m) => initial.has(modelKey(m)) && !state.selectedCandidates.has(modelKey(m))).map(modelKey));
+      const kept = models.filter((m) => !removed.has(modelKey(m)));
+      const additions = state.modelCandidates.filter((m) => state.selectedCandidates.has(modelKey(m)) && !initial.has(modelKey(m)));
+      return { additions, removed, next: [...kept, ...additions] };
+    }
+    function candidateConflict(model) {
+      return !state.candidateSnapshot.some((m) => modelKey(m) === modelKey(model)) && state.candidateSnapshot.some((m) => m.id.toLowerCase() === model.id.toLowerCase());
+    }
+    function updateCandidateCount() {
+      const { additions, removed } = candidateChanges();
+      const changed = additions.length + removed.size;
+      $('confirmCandidates').textContent = changed ? `应用更改（+${additions.length} / −${removed.size}）` : '应用更改';
+      $('confirmCandidates').disabled = !changed || state.candidateBusy;
+    }
+    function visibleCandidates() {
+      const query = $('candidateSearch').value.trim().toLowerCase();
+      return state.modelCandidates.map((model, index) => ({ ...model, index })).filter((model) => !query || model.id.toLowerCase().includes(query) || model.upstream_id.toLowerCase().includes(query));
+    }
+    function renderCandidateList() {
+      const existing = new Set(state.candidateSnapshot.map(modelKey));
+      const visible = visibleCandidates();
+      $('candidateList').innerHTML = visible.length ? visible.map((model) => {
+        const added = existing.has(modelKey(model));
+        const conflict = candidateConflict(model);
+        return `<label class="candidate-row"><input class="candidate-check" type="checkbox" data-index="${model.index}" ${conflict || state.candidateBusy ? 'disabled' : ''} ${state.selectedCandidates.has(modelKey(model)) ? 'checked' : ''}><span class="model-main"><strong class="mono">${esc(model.id)}</strong><span class="subtext mono" style="display:block">→ ${esc(model.upstream_id)}</span></span>${conflict ? '<span class="badge">名称已被自定义映射占用</span>' : added ? '<span class="badge">已添加</span>' : ''}</label>`;
+      }).join('') : '<div class="candidate-empty">没有匹配的模型</div>';
+      updateCandidateCount();
+      $('selectCandidates').disabled = state.candidateBusy || !visible.some((m) => !candidateConflict(m));
+      $('clearCandidates').disabled = state.candidateBusy || !visible.some((m) => state.selectedCandidates.has(modelKey(m)));
+    }
+    function renderCredentials(data) {
+      const items = Array.isArray(data?.items) ? data.items : [];
+      $('credentialList').innerHTML = items.length ? items.map((item) => `<div class="credential-row"><div class="credential-main"><div class="primary-text">${shown(item.label, '未命名')}</div><div class="subtext mono">${shown(item.id, '无 ID')} · ${item.enabled === false ? '已停用' : '已配置'}</div></div><div class="row-actions"><button class="button compact edit-credential" type="button" data-id="${esc(item.id)}" data-label="${esc(item.label)}">编辑</button><button class="button compact danger remove-credential" type="button" data-id="${esc(item.id)}" data-label="${esc(item.label)}">删除</button></div></div>`).join('') : '<div class="empty">尚未导入凭据</div>';
+    }
+    async function loadConfig() {
+      try {
+        const [config, models, credentials] = await Promise.all([api('/config'), api('/models'), api('/credentials')]);
+        state.config = config || {};
+        $('nonstreamMode').value = ['native', 'native-fallback', 'stream-aggregate'].includes(config?.nonstream_mode) ? config.nonstream_mode : 'stream-aggregate';
+        dropdowns.get('nonstreamMode').sync();
+        $('timeoutSeconds').value = present(config?.timeout_seconds) ? config.timeout_seconds : 120;
+        $('logRetention').value = present(config?.log_retention) ? config.log_retention : 500;
+        renderModels(models);
+        resetModelForm();
+        renderCredentials(credentials);
+        $('modelState').textContent = '';
+        $('credentialState').textContent = '';
+        $('settingsState').textContent = '';
+        globalError('');
+      } catch (error) { globalError(`配置读取失败：${error.message}`); }
+    }
+    function setTab(name) {
+      const logs = name === 'logs';
+      $('logsTab').setAttribute('aria-selected', String(logs));
+      $('configTab').setAttribute('aria-selected', String(!logs));
+      $('logsPanel').hidden = !logs;
+      $('configPanel').hidden = logs;
+      if (!logs) loadConfig();
+    }
+    $('logsTab').addEventListener('click', () => setTab('logs'));
+    $('configTab').addEventListener('click', () => setTab('config'));
+    $('refreshLogs').addEventListener('click', () => { loadStatus().catch((error) => globalError(error.message)); loadLogs(); });
+    $('prevPage').addEventListener('click', () => { if (state.page > 0) { state.page--; loadLogs(); } });
+    $('nextPage').addEventListener('click', () => { if ((state.page + 1) * PAGE_SIZE < state.total) { state.page++; loadLogs(); } });
+    let searchTimer;
+    $('search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { state.page = 0; loadLogs(); }, 280); });
+    $('statusFilter').addEventListener('change', () => { state.page = 0; loadLogs(); });
+    $('providerFilter').addEventListener('change', () => { state.page = 0; loadLogs(); });
+    $('authButton').addEventListener('click', () => $('authDialog').showModal());
+    $('closeAuth').addEventListener('click', () => $('authDialog').close());
+    $('clearAuth').addEventListener('click', () => { state.key = ''; $('authKey').value = ''; $('authDialog').close(); $('authButton').textContent = '管理密钥'; toast('当前页面的管理密钥已清除'); });
+    $('authForm').addEventListener('submit', (event) => {
+      event.preventDefault();
+      state.key = $('authKey').value.trim();
+      state.authType = $('authType').value;
+      $('authKey').value = '';
+      $('authButton').textContent = state.key ? '密钥已输入' : '管理密钥';
+      $('authDialog').close();
+      loadStatus().catch((error) => globalError(error.message));
+      if ($('logsPanel').hidden) loadConfig(); else loadLogs();
+    });
+    $('refreshModels').addEventListener('click', async () => {
+      if (state.fetchingModels || state.modelBusy) return;
+      state.fetchingModels = true;
+      for (const id of ['refreshModels', 'saveModel', 'cancelModelEdit']) $(id).disabled = true;
+      $('modelDialogState').textContent = '正在获取上游模型…';
+      try {
+        const result = await api('/models/refresh', { method: 'POST' });
+        if (!Array.isArray(result?.models)) throw new Error('模型目录响应缺少候选列表');
+        const current = await api('/models');
+        if (!Array.isArray(current?.models)) throw new Error('现有模型列表读取失败');
+        renderModels(current);
+        state.candidateSnapshot = structuredClone(current.models);
+        const unique = new Set();
+        state.modelCandidates = result.models.map((model) => ({ id: String(model?.id ?? ''), upstream_id: String(model?.upstream_id ?? '') })).filter((model) => {
+          const key = model.id;
+          if (!model.id || !model.upstream_id || unique.has(key)) return false;
+          unique.add(key);
+          return true;
+        });
+        const existing = new Set(current.models.map(modelKey));
+        state.selectedCandidates = new Set(state.modelCandidates.map(modelKey).filter((key) => existing.has(key)));
+        $('candidateSearch').value = '';
+        $('candidateState').textContent = '';
+        renderCandidateList();
+        $('modelDialog').close();
+        $('modelCandidateDialog').showModal();
+        $('candidateSearch').focus();
+      }
+      catch (error) { $('modelDialogState').textContent = `获取失败：${error.message}`; }
+      finally {
+        state.fetchingModels = false;
+        for (const id of ['refreshModels', 'saveModel', 'cancelModelEdit']) $(id).disabled = false;
+      }
+    });
+    $('candidateSearch').addEventListener('input', renderCandidateList);
+    $('candidateList').addEventListener('change', (event) => {
+      const checkbox = event.target.closest('.candidate-check');
+      if (!checkbox || state.candidateBusy) return;
+      const model = state.modelCandidates[Number(checkbox.dataset.index)];
+      if (!model || candidateConflict(model)) return;
+      const key = modelKey(model);
+      if (checkbox.checked) state.selectedCandidates.add(key); else state.selectedCandidates.delete(key);
+      updateCandidateCount();
+      $('clearCandidates').disabled = !visibleCandidates().some((m) => state.selectedCandidates.has(modelKey(m)));
+    });
+    $('selectCandidates').addEventListener('click', () => {
+      for (const model of visibleCandidates()) if (!candidateConflict(model)) state.selectedCandidates.add(modelKey(model));
+      renderCandidateList();
+    });
+    $('clearCandidates').addEventListener('click', () => {
+      for (const model of visibleCandidates()) state.selectedCandidates.delete(modelKey(model));
+      renderCandidateList();
+    });
+    $('cancelCandidates').addEventListener('click', () => $('modelCandidateDialog').close());
+    $('modelCandidateDialog').addEventListener('cancel', (event) => { if (state.candidateBusy) event.preventDefault(); });
+    $('modelCandidateDialog').addEventListener('close', () => {
+      state.modelCandidates = [];
+      state.candidateSnapshot = [];
+      state.selectedCandidates.clear();
+      $('candidateList').replaceChildren();
+      $('candidateSearch').value = '';
+      $('candidateState').textContent = '';
+    });
+    $('confirmCandidates').addEventListener('click', async () => {
+      if (state.candidateBusy) return;
+      const changes = candidateChanges();
+      if (!changes.additions.length && !changes.removed.size) return;
+      state.candidateBusy = true;
+      $('cancelCandidates').disabled = true;
+      $('candidateState').textContent = '正在保存模型映射…';
+      renderCandidateList();
+      try {
+        const current = await api('/models');
+        if (!Array.isArray(current?.models)) throw new Error('现有模型列表读取失败');
+        if (JSON.stringify(current.models) !== JSON.stringify(state.candidateSnapshot)) throw new Error('模型映射已在其他页面更新，请取消后重新获取上游模型');
+        const saved = await api('/models', { method: 'PUT', body: { models: changes.next } });
+        renderModels(Array.isArray(saved?.models) ? saved : { models: changes.next });
+        $('modelCandidateDialog').close();
+        $('modelState').textContent = `已添加 ${changes.additions.length} 个、删除 ${changes.removed.size} 个模型`;
+        loadStatus().catch((error) => globalError(`状态刷新失败：${error.message}`));
+      } catch (error) { $('candidateState').textContent = `保存失败：${error.message}`; }
+      finally { state.candidateBusy = false; $('cancelCandidates').disabled = false; renderCandidateList(); }
+    });
+    function openModelDialog(index = -1) {
+      if (state.modelBusy || state.fetchingModels) return;
+      resetModelForm();
+      const model = state.models[index];
+      if (model) {
+        state.editingModelIndex = index;
+        $('modelId').value = model.id ?? '';
+        $('upstreamId').value = model.upstream_id ?? '';
+        $('modelFormTitle').textContent = '编辑模型映射';
+        $('saveModel').textContent = '保存映射';
+        $('refreshModels').hidden = true;
+      }
+      $('modelDialog').showModal();
+      $('modelId').focus();
+    }
+    $('openModel').addEventListener('click', () => openModelDialog());
+    $('cancelModelEdit').addEventListener('click', () => $('modelDialog').close());
+    $('modelDialog').addEventListener('cancel', (event) => { if (state.modelBusy || state.fetchingModels) event.preventDefault(); });
+    $('modelDialog').addEventListener('close', resetModelForm);
+    $('modelList').addEventListener('click', async (event) => {
+      if (state.modelBusy || state.fetchingModels) return;
+      const edit = event.target.closest('.edit-model');
+      const remove = event.target.closest('.delete-model');
+      const button = edit || remove;
+      if (!button) return;
+      const index = Number(button.dataset.index);
+      const model = state.models[index];
+      if (!model) return;
+      if (edit) {
+        openModelDialog(index);
+        return;
+      }
+      state.modelBusy = true;
+      button.disabled = true;
+      $('modelState').textContent = '正在删除…';
+      try { await saveModels(state.models.filter((_, itemIndex) => itemIndex !== index)); $('modelState').textContent = '模型映射已删除'; }
+      catch (error) { $('modelState').textContent = `删除失败：${error.message}`; button.disabled = false; }
+      finally { state.modelBusy = false; }
+    });
+    $('modelForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (state.modelBusy || state.fetchingModels) return;
+      const id = $('modelId').value;
+      const upstream_id = $('upstreamId').value;
+      if (!id.trim() || !upstream_id.trim()) { $('modelDialogState').textContent = '两个模型名称都不能为空'; return; }
+      if (state.models.some((model, index) => index !== state.editingModelIndex && String(model.id).toLowerCase() === id.toLowerCase())) { $('modelDialogState').textContent = '客户端模型名称已存在'; return; }
+      const next = state.models.map((model) => ({ ...model }));
+      const original = next[state.editingModelIndex];
+      const item = { id, upstream_id, providers: original?.providers || [] };
+      if (state.editingModelIndex < 0) next.push(item); else next[state.editingModelIndex] = item;
+      state.modelBusy = true;
+      $('saveModel').disabled = true;
+      $('cancelModelEdit').disabled = true;
+      $('modelDialogState').textContent = '正在保存…';
+      try { await saveModels(next); $('modelDialog').close(); $('modelState').textContent = '模型映射已保存'; }
+      catch (error) { $('modelDialogState').textContent = `保存失败：${error.message}`; }
+      finally { state.modelBusy = false; $('saveModel').disabled = false; $('cancelModelEdit').disabled = false; }
+    });
+    $('settingsForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const timeout_seconds = Number($('timeoutSeconds').value);
+      const log_retention = Number($('logRetention').value);
+      if (!Number.isInteger(timeout_seconds) || timeout_seconds < 10 || timeout_seconds > 1800 || !Number.isInteger(log_retention) || log_retention < 50 || log_retention > 10000) {
+        $('settingsState').textContent = '超时需为 10–1800 秒，日志保留需为 50–10000 条';
+        return;
+      }
+      const next = { nonstream_mode: $('nonstreamMode').value, timeout_seconds, log_retention };
+      $('saveSettings').disabled = true;
+      $('settingsState').textContent = '正在保存…';
+      try { state.config = await api('/config', { method: 'PUT', body: next }); $('settingsState').textContent = '设置已保存'; }
+      catch (error) { $('settingsState').textContent = `保存失败：${error.message}`; }
+      finally { $('saveSettings').disabled = false; }
+    });
+    function openCredentialDialog(id = '', label = '') {
+      state.editingCredentialId = id;
+      $('credentialForm').reset();
+      $('credentialLabel').value = label;
+      $('credentialKey').required = !id;
+      $('credentialKey').placeholder = id ? '留空保持原有 Key' : '输入新的 API Key';
+      $('credentialDialogTitle').textContent = id ? '编辑凭据' : '添加凭据';
+      $('credentialDialogHint').textContent = id ? '留空 API Key 仅更新名称。' : '输入名称和 API Key。';
+      $('saveCredential').textContent = id ? '保存凭据' : '添加凭据';
+      $('credentialDialogState').textContent = '';
+      $('credentialDialog').showModal();
+      $('credentialLabel').focus();
+    }
+    $('openCredential').addEventListener('click', () => openCredentialDialog());
+    $('cancelCredential').addEventListener('click', () => $('credentialDialog').close());
+    $('credentialDialog').addEventListener('cancel', (event) => { if (state.credentialBusy) event.preventDefault(); });
+    $('credentialDialog').addEventListener('close', () => {
+      $('credentialForm').reset();
+      $('credentialKey').value = '';
+      state.editingCredentialId = '';
+      $('credentialDialogState').textContent = '';
+    });
+    $('credentialForm').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (state.credentialBusy) return;
+      const label = $('credentialLabel').value.trim();
+      const apiKey = $('credentialKey').value.trim();
+      const id = state.editingCredentialId;
+      $('credentialKey').value = '';
+      if (!label || (!id && !apiKey)) { $('credentialDialogState').textContent = '请输入名称和 API Key'; return; }
+      state.credentialBusy = true;
+      $('saveCredential').disabled = true;
+      $('cancelCredential').disabled = true;
+      $('credentialDialogState').textContent = '正在保存…';
+      try {
+        const body = { label };
+        if (apiKey) body.api_key = apiKey;
+        await api('/credentials', { method: id ? 'PUT' : 'POST', query: id ? { id } : undefined, body });
+        $('credentialDialog').close();
+        $('credentialState').textContent = id ? '凭据已更新' : '凭据已添加';
+        renderCredentials(await api('/credentials'));
+        await loadStatus();
+      } catch (error) {
+        const message = `保存失败：${error.message}`;
+        if ($('credentialDialog').open) $('credentialDialogState').textContent = message;
+        else $('credentialState').textContent = `已提交，刷新失败：${error.message}`;
+      } finally { state.credentialBusy = false; $('saveCredential').disabled = false; $('cancelCredential').disabled = false; }
+    });
+    $('credentialList').addEventListener('click', async (event) => {
+      const edit = event.target.closest('.edit-credential');
+      if (edit) { openCredentialDialog(edit.dataset.id, edit.dataset.label); return; }
+      const button = event.target.closest('.remove-credential');
+      if (!button) return;
+      const id = button.dataset.id;
+      if (!id || !confirm(`删除凭据「${button.dataset.label || id}」？`)) return;
+      button.disabled = true;
+      try { await api('/credentials', { method: 'DELETE', query: { id } }); renderCredentials(await api('/credentials')); await loadStatus(); toast('凭据已删除'); }
+      catch (error) { toast(`删除失败：${error.message}`); button.disabled = false; }
+    });
+    if (!apiReady()) globalError('管理 API 路径尚未注入；请由宿主设置 __PASSBRIDGE_API_BASE__。');
+    else { loadStatus().then(() => loadLogs()).catch((error) => globalError(error.message)); }
+  </script>
+</body>
+</html>

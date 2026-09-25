@@ -1,0 +1,10 @@
+/dist/
+/data/
+*.so
+*.dll
+*.dylib
+*.h
+*.exe
+.env
+*credentials*.json
+*.jsonl
