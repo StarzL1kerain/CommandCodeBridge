@@ -77,7 +77,13 @@ Command Code 的鉴权只有一种形态：`Authorization: Bearer <API Key>`，k
 
 ## 安装
 
-先在 CPA 配置中启用插件并添加本仓库的市场源。需要 CLIProxyAPI v7.3.12 或兼容的插件 ABI。以下是通用配置片段，按现有配置合并：
+需要 CLIProxyAPI v7.3.12 或兼容的插件 ABI，且宿主的 `plugins.enabled` 为 `true`。
+
+**本插件不在内置的官方市场里** —— CPA 的内置市场只收录官方插件，所以安装它只有两条路：给 CPA 追加一个市场源，或者直接手动安装。
+
+### 方式一：追加市场源
+
+在 CPA 配置里加上本仓库的市场源（其余字段按现有配置合并）：
 
 ```yaml
 plugins:
@@ -87,9 +93,35 @@ plugins:
     - https://raw.githubusercontent.com/StarzL1kerain/CommandCodeBridge/main/marketplace/registry.json
 ```
 
-CPA 的内置官方市场始终保留；`store-sources` 添加一个额外来源。在 CPA 的插件市场找到 **CommandCodeBridge** 并安装。市场读取 `marketplace/registry.json`，再从本仓库 Release 下载与宿主平台匹配的 ZIP 和 `checksums.txt`，核验 ZIP 的 SHA-256。各 ZIP 根目录分别是 `commandcodebridge.so`（Linux）、`commandcodebridge.dylib`（macOS）或 `commandcodebridge.dll`（Windows）；安装后的文件名带版本，但插件 ID 始终是 `commandcodebridge`。
+内置的官方市场始终保留，`store-sources` 只是追加一个来源。加上之后在 CPA 的插件市场里搜 **CommandCodeBridge** 即可安装，安装完会自动写入 `plugins.configs.commandcodebridge`。
 
-市场安装会写入插件配置。插件加载后打开：
+> 这条路要求宿主机能访问 `raw.githubusercontent.com`（读 registry）与 `github.com`（下 Release 资产）。网络抖动时 `/v0/management/plugin-store` 会超时或 502 —— 用下面的手动方式即可绕开。
+
+### 方式二：手动安装（离线，网络不稳时推荐）
+
+1. 在本仓库的 Releases 里下载宿主平台对应的 ZIP：`commandcodebridge_<version>_<goos>_<goarch>.zip`（linux/darwin/windows 共五个平台，版本与 tag 一致）。
+2. 用同 Release 的 `checksums.txt` 核验 ZIP 的 SHA-256。
+3. 解压 —— ZIP 根目录直接就是动态库：`commandcodebridge.so`（Linux）、`commandcodebridge.dylib`（macOS）、`commandcodebridge.dll`（Windows）。
+4. 放进 CPA 的插件目录：`plugins/`，或按平台分目录 `plugins/<GOOS>/<GOARCH>/`。文件名可以带版本（如 `commandcodebridge-v0.1.1.so`），宿主会据此解析出版本号；插件 ID 始终是 `commandcodebridge`。
+5. 确认配置里已启用：
+
+```yaml
+plugins:
+  enabled: true
+  dir: plugins
+  configs:
+    commandcodebridge:
+      enabled: true
+      priority: 10
+```
+
+6. 重启 CPA，或通过管理接口让它重新加载动态库。
+
+**验证**：`GET /v0/management/plugins`（需管理密钥）里该插件应显示 `registered: true` 与 `effective_enabled: true`。注意别混用三个状态字段：`plugins_enabled` 是全局开关、`enabled` 是单个插件开关、`registered` 才是动态库已加载；三者都满足才是真正生效。
+
+### 打开控制台
+
+插件加载后打开：
 
 ```text
 /v0/resource/plugins/commandcodebridge/console
