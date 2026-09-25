@@ -250,7 +250,7 @@ func TestQuotaFetchReportsWindowsBalanceAndPlan(t *testing.T) {
 	}
 }
 
-// TestQuotaFetchMatchesLiveApiShapes 用 2026-09-25 实测抓到的真实响应体做回归：
+// TestQuotaFetchMatchesLiveApiShapes 复刻实测确认过的上游响应形状（数值已脱敏）：
 // 个人账户 whoami 无 org、windowLimits 与 credits 平级、planId 只在 subscriptions 里。
 // 曾经把 windowLimits 当 credits 的子对象解析，导致窗口桶永远为空。
 func TestQuotaFetchMatchesLiveApiShapes(t *testing.T) {
@@ -264,28 +264,28 @@ func TestQuotaFetchMatchesLiveApiShapes(t *testing.T) {
 	h := newRecordingHost(
 		jsonStatusPlan(200, map[string]any{
 			"success": true,
-			"user":    map[string]any{"id": "7c9e6679-7425-40de-944b-e07fc1f90ae7", "name": "StarzL1kerain", "userName": "StarzL1kerain"},
+			"user":    map[string]any{"id": "7c9e6679-7425-40de-944b-e07fc1f90ae7", "name": "example-user", "userName": "example-user"},
 			"org":     nil,
 		}),
 		jsonStatusPlan(200, map[string]any{
 			"credits": map[string]any{
 				"belowThreshold": false, "creditThreshold": 0,
-				"monthlyCredits": 34.903247015, "purchasedCredits": 0, "freeCredits": 0,
+				"monthlyCredits": 28.5, "purchasedCredits": 0, "freeCredits": 0,
 			},
 			"windowLimits": map[string]any{
 				"limited": true, "exceeded": "weekly",
-				"fiveHour": map[string]any{"used": 0, "cap": 14, "exceeded": false, "resetAt": 0},
-				"weekly":   map[string]any{"used": 35.096752985, "cap": 35, "exceeded": true, "resetAt": 1790415895560},
+				"fiveHour": map[string]any{"used": 0, "cap": 10, "exceeded": false, "resetAt": 0},
+				"weekly":   map[string]any{"used": 12.5, "cap": 12, "exceeded": true, "resetAt": 1790000000000},
 			},
 			"sandboxAccess": false,
 		}),
 		jsonStatusPlan(200, map[string]any{"success": true, "data": map[string]any{
-			"planId": "individual-goat", "status": "active",
-			"currentPeriodStart": "2026-09-19T09:32:50.000Z",
-			"currentPeriodEnd":   "2026-10-19T09:32:50.000Z",
+			"planId": "individual-pro", "status": "active",
+			"currentPeriodStart": "2026-09-01T00:00:00Z",
+			"currentPeriodEnd":   "2026-10-01T00:00:00Z",
 		}}),
 		jsonStatusPlan(200, map[string]any{
-			"totalCount": 3445, "totalCost": 35.09675298500001, "totalMonthlyCredits": 35.09675298500001,
+			"totalCount": 42, "totalCost": 21.5, "totalMonthlyCredits": 21.5,
 		}),
 	)
 	s.SetHost(h.call)
@@ -296,26 +296,25 @@ func TestQuotaFetchMatchesLiveApiShapes(t *testing.T) {
 	if got := bucketByWindow(t, result, "five_hour")["remainingFraction"].(float64); got != 1 {
 		t.Fatalf("five_hour remaining = %v", got)
 	}
-	// 7 天窗口已超额（35.0967 / 35），必须钳到 0 而不是负数。
+	// 7 天窗口已超额（12.5 / 12），必须钳到 0 而不是负数。
 	if got := bucketByWindow(t, result, "seven_day")["remainingFraction"].(float64); got != 0 {
 		t.Fatalf("seven_day remaining = %v", got)
 	}
-	// 月度窗口：上游不给上限，用「本周期已用 + 剩余月额度」还原
-	// （35.096752985 + 34.903247015 = 70），与官方 CLI 的 Monthly Limit 50% 对得上。
+	// 月度窗口：上游不给上限，用「本周期已用 + 剩余月额度」还原（21.5 + 28.5 = 50）。
 	monthly := bucketByWindow(t, result, "monthly")
-	if got := monthly["remainingFraction"].(float64); math.Abs(got-0.498618) > 1e-5 {
-		t.Fatalf("monthly remaining = %v, want ≈0.498618（34.903247015 / 70）", got)
+	if got := monthly["remainingFraction"].(float64); math.Abs(got-0.57) > 1e-9 {
+		t.Fatalf("monthly remaining = %v, want 28.5/50 = 0.57", got)
 	}
-	if monthly["resetTime"] != "2026-10-19T09:32:50.000Z" {
+	if monthly["resetTime"] != "2026-10-01T00:00:00Z" {
 		t.Fatalf("monthly resetTime = %#v", monthly["resetTime"])
 	}
-	if desc := str(monthly["description"]); !strings.Contains(desc, "50.1%") {
+	if desc := str(monthly["description"]); !strings.Contains(desc, "43.0%") {
 		t.Fatalf("monthly description = %q", desc)
 	}
-	if plan := result.(map[string]any)["subscription"].(map[string]any)["plan"]; plan != "GOAT" {
+	if plan := result.(map[string]any)["subscription"].(map[string]any)["plan"]; plan != "Pro" {
 		t.Fatalf("plan = %#v", plan)
 	}
-	if balance := metricByKey(t, result, "command_code_balance"); balance["value"].(float64) != 34.903247015 {
+	if balance := metricByKey(t, result, "command_code_balance"); balance["value"].(float64) != 28.5 {
 		t.Fatalf("balance = %#v", balance)
 	}
 	// 个人账户没有 org：带上空 orgId 会让上游返回 400 Invalid UUID。

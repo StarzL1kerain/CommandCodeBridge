@@ -57,9 +57,9 @@ Command Code 的鉴权只有一种形态：`Authorization: Bearer <API Key>`，k
 | 7 天 | `seven_day` | `windowLimits.weekly.used` | `windowLimits.weekly.cap` | `resetAt`（epoch 毫秒） |
 | 月度 | `monthly` | `summary.totalMonthlyCredits`（缺失时退回 `totalCost`） | **已用 + `credits.monthlyCredits`** | `subscriptions.data.currentPeriodEnd` |
 
-月度上限是**还原**出来的：上游在 `windowLimits` 里只给两个滚动窗口，月额度只暴露"剩余"（`credits.monthlyCredits`），所以上限 = 剩余 + 本周期已用（实测两数相加正好是整份月额度：34.903247015 + 35.096752985 = 70）。
+月度上限是**还原**出来的：上游在 `windowLimits` 里只给两个滚动窗口，月额度只暴露"剩余"（`credits.monthlyCredits`），所以上限 = 剩余 + 本周期已用（实测两数相加正好等于整份月额度，测试里用脱敏后的等价数值 28.5 + 21.5 = 50 固定这条行为）。
 
-桶的 `description` 刻意用**已用**口径（如 `月度额度已用 50.1%（35.10 / 70.00 积分）`），与官方 CLI 显示的数字一致；`remainingFraction` 仍是"剩余"比例，这是宿主的字段语义。
+桶的 `description` 刻意用**已用**口径（如 `月度额度已用 43.0%（21.50 / 50.00 积分）`），与官方 CLI 显示的数字一致；`remainingFraction` 仍是"剩余"比例，这是宿主的字段语义。
 
 `quota.reset` 一律返回失败，因为 Command Code 未提供重置额度的接口。
 

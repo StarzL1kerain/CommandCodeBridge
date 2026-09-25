@@ -9,3 +9,4 @@
 *credentials*.json
 *.jsonl
 .deploy/
+.commandcode/

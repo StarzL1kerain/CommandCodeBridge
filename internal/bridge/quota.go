@@ -52,8 +52,8 @@ var quotaWindows = []struct {
 
 // monthlyWindowToken 是月度额度的 window token（补丁版面板可识别）。
 // 月度窗口不在 windowLimits 里——上游只给剩余的月额度 credits.monthlyCredits，
-// 上限必须用「剩余 + 本周期已用」还原：实测两个数相加正好是整份月额度
-// （34.903247015 + 35.096752985 = 70），与官方 CLI /usage 里的 "Monthly Limit" 一致。
+// 上限必须用「剩余 + 本周期已用」还原：实测两个数相加正好等于整份月额度，
+// 与官方 CLI /usage 里的 "Monthly Limit" 一致。
 const monthlyWindowToken = "monthly"
 
 type windowLimit struct {
