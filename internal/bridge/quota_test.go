@@ -3,6 +3,7 @@ package bridge
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -101,20 +102,24 @@ func whoamiPlan() hostPlan {
 	})
 }
 
-// creditsPlan 复刻 /alpha/billing/credits 的真实形状（CLI projectUsageView 消费路径）。
+// creditsPlan 复刻 /alpha/billing/credits 的真实形状（2026-09-25 实测）：
+// windowLimits 与 credits 平级，credits 里没有 planId。
 func creditsPlan() hostPlan {
 	return jsonStatusPlan(200, map[string]any{
 		"credits": map[string]any{
-			"planId":           "individual-goat",
+			"belowThreshold":   false,
+			"creditThreshold":  0,
 			"monthlyCredits":   400,
 			"purchasedCredits": 50.5,
 			"freeCredits":      9.5,
-			"windowLimits": map[string]any{
-				"limited":  true,
-				"fiveHour": map[string]any{"used": 25, "cap": 100, "resetAt": float64(time.Now().Add(3 * time.Hour).UnixMilli())},
-				"weekly":   map[string]any{"used": 600, "cap": 2000, "resetAt": float64(time.Now().Add(60 * time.Hour).UnixMilli())},
-			},
 		},
+		"windowLimits": map[string]any{
+			"limited":  true,
+			"exceeded": "weekly",
+			"fiveHour": map[string]any{"used": 25, "cap": 100, "exceeded": false, "resetAt": float64(time.Now().Add(3 * time.Hour).UnixMilli())},
+			"weekly":   map[string]any{"used": 600, "cap": 2000, "exceeded": false, "resetAt": float64(time.Now().Add(60 * time.Hour).UnixMilli())},
+		},
+		"sandboxAccess": false,
 	})
 }
 
@@ -245,6 +250,82 @@ func TestQuotaFetchReportsWindowsBalanceAndPlan(t *testing.T) {
 	}
 }
 
+// TestQuotaFetchMatchesLiveApiShapes 用 2026-09-25 实测抓到的真实响应体做回归：
+// 个人账户 whoami 无 org、windowLimits 与 credits 平级、planId 只在 subscriptions 里。
+// 曾经把 windowLimits 当 credits 的子对象解析，导致窗口桶永远为空。
+func TestQuotaFetchMatchesLiveApiShapes(t *testing.T) {
+	s := registeredService(t, "")
+	credential := apiKeyCredential()
+	if _, err := s.Handle("auth.parse", jsonBytes(map[string]any{
+		"Provider": Provider, "FileName": credential.ID + ".json", "RawJSON": jsonBytes(credential),
+	})); err != nil {
+		t.Fatalf("parse credential: %v", err)
+	}
+	h := newRecordingHost(
+		jsonStatusPlan(200, map[string]any{
+			"success": true,
+			"user":    map[string]any{"id": "7c9e6679-7425-40de-944b-e07fc1f90ae7", "name": "StarzL1kerain", "userName": "StarzL1kerain"},
+			"org":     nil,
+		}),
+		jsonStatusPlan(200, map[string]any{
+			"credits": map[string]any{
+				"belowThreshold": false, "creditThreshold": 0,
+				"monthlyCredits": 34.903247015, "purchasedCredits": 0, "freeCredits": 0,
+			},
+			"windowLimits": map[string]any{
+				"limited": true, "exceeded": "weekly",
+				"fiveHour": map[string]any{"used": 0, "cap": 14, "exceeded": false, "resetAt": 0},
+				"weekly":   map[string]any{"used": 35.096752985, "cap": 35, "exceeded": true, "resetAt": 1790415895560},
+			},
+			"sandboxAccess": false,
+		}),
+		jsonStatusPlan(200, map[string]any{"success": true, "data": map[string]any{
+			"planId": "individual-goat", "status": "active",
+			"currentPeriodStart": "2026-09-19T09:32:50.000Z",
+			"currentPeriodEnd":   "2026-10-19T09:32:50.000Z",
+		}}),
+		jsonStatusPlan(200, map[string]any{
+			"totalCount": 3445, "totalCost": 35.09675298500001, "totalMonthlyCredits": 35.09675298500001,
+		}),
+	)
+	s.SetHost(h.call)
+	result, err := s.fetchQuota(jsonBytes(quotaRequest{StorageJSON: jsonBytes(credential), AuthID: credential.ID}))
+	if err != nil {
+		t.Fatalf("fetch quota: %v", err)
+	}
+	if got := bucketByWindow(t, result, "five_hour")["remainingFraction"].(float64); got != 1 {
+		t.Fatalf("five_hour remaining = %v", got)
+	}
+	// 7 天窗口已超额（35.0967 / 35），必须钳到 0 而不是负数。
+	if got := bucketByWindow(t, result, "seven_day")["remainingFraction"].(float64); got != 0 {
+		t.Fatalf("seven_day remaining = %v", got)
+	}
+	// 月度窗口：上游不给上限，用「本周期已用 + 剩余月额度」还原
+	// （35.096752985 + 34.903247015 = 70），与官方 CLI 的 Monthly Limit 50% 对得上。
+	monthly := bucketByWindow(t, result, "monthly")
+	if got := monthly["remainingFraction"].(float64); math.Abs(got-0.498618) > 1e-5 {
+		t.Fatalf("monthly remaining = %v, want ≈0.498618（34.903247015 / 70）", got)
+	}
+	if monthly["resetTime"] != "2026-10-19T09:32:50.000Z" {
+		t.Fatalf("monthly resetTime = %#v", monthly["resetTime"])
+	}
+	if desc := str(monthly["description"]); !strings.Contains(desc, "50.1%") {
+		t.Fatalf("monthly description = %q", desc)
+	}
+	if plan := result.(map[string]any)["subscription"].(map[string]any)["plan"]; plan != "GOAT" {
+		t.Fatalf("plan = %#v", plan)
+	}
+	if balance := metricByKey(t, result, "command_code_balance"); balance["value"].(float64) != 34.903247015 {
+		t.Fatalf("balance = %#v", balance)
+	}
+	// 个人账户没有 org：带上空 orgId 会让上游返回 400 Invalid UUID。
+	for _, call := range h.snapshot() {
+		if strings.Contains(call.url, "orgId") {
+			t.Fatalf("orgId must be omitted when whoami has no org: %s", call.url)
+		}
+	}
+}
+
 // 按量付费（无窗口限制）不应导致整体失败，余额仍可展示。
 func TestQuotaFetchSurvivesUnlimitedAccounts(t *testing.T) {
 	s := registeredService(t, "")
@@ -256,10 +337,10 @@ func TestQuotaFetchSurvivesUnlimitedAccounts(t *testing.T) {
 	}
 	h := newRecordingHost(
 		whoamiPlan(),
-		jsonStatusPlan(200, map[string]any{"credits": map[string]any{
-			"planId": "individual-provider", "monthlyCredits": 0, "purchasedCredits": 25, "freeCredits": 0,
+		jsonStatusPlan(200, map[string]any{
+			"credits":      map[string]any{"monthlyCredits": 0, "purchasedCredits": 25, "freeCredits": 0},
 			"windowLimits": map[string]any{"limited": false},
-		}}),
+		}),
 		jsonStatusPlan(200, map[string]any{"data": map[string]any{}}),
 		jsonStatusPlan(200, map[string]any{}),
 	)
@@ -285,6 +366,72 @@ func TestQuotaDescribeReportsProviderKey(t *testing.T) {
 	}
 	if describe["supports_reset"] != false {
 		t.Fatalf("supports_reset = %#v", describe["supports_reset"])
+	}
+}
+
+// 上游偶发抖动（5xx / 连接重置）必须重试：这是额度刷新超时的主要来源。
+func TestHostRequestRetriesTransientFailures(t *testing.T) {
+	s := registeredService(t, "")
+	h := newRecordingHost(
+		jsonStatusPlan(503, map[string]any{"error": "temporarily unavailable"}),
+		jsonStatusPlan(200, map[string]any{"success": true, "user": map[string]any{"id": "user-1"}}),
+	)
+	s.SetHost(h.call)
+	status, body, err := s.hostRequest("", http.MethodGet, "https://api.commandcode.ai/alpha/whoami?limits=1", http.Header{}, nil)
+	if err != nil || status != 200 {
+		t.Fatalf("retry result: status=%d body=%s err=%v", status, body, err)
+	}
+	if calls := h.snapshot(); len(calls) != 2 {
+		t.Fatalf("expected 2 upstream attempts, got %d", len(calls))
+	}
+}
+
+// 4xx 是确定性结果（比如 key 无效），重试只会拖慢报错。
+func TestHostRequestDoesNotRetryClientErrors(t *testing.T) {
+	s := registeredService(t, "")
+	h := newRecordingHost(jsonStatusPlan(401, map[string]any{"error": "bad key"}))
+	s.SetHost(h.call)
+	status, _, err := s.hostRequest("", http.MethodGet, "https://api.commandcode.ai/alpha/whoami?limits=1", http.Header{}, nil)
+	if err != nil || status != 401 {
+		t.Fatalf("result: status=%d err=%v", status, err)
+	}
+	if calls := h.snapshot(); len(calls) != 1 {
+		t.Fatalf("401 must not be retried, got %d attempts", len(calls))
+	}
+}
+
+// whoami 只提供 orgId：它抖挂时额度视图仍应可用（个人账户本来就不带 orgId）。
+func TestQuotaSurvivesWhoamiOutage(t *testing.T) {
+	s := registeredService(t, "")
+	credential := apiKeyCredential()
+	if _, err := s.Handle("auth.parse", jsonBytes(map[string]any{
+		"Provider": Provider, "FileName": credential.ID + ".json", "RawJSON": jsonBytes(credential),
+	})); err != nil {
+		t.Fatalf("parse credential: %v", err)
+	}
+	h := newRecordingHost(
+		jsonStatusPlan(502, map[string]any{"error": "bad gateway"}),
+		jsonStatusPlan(502, map[string]any{"error": "bad gateway"}),
+		jsonStatusPlan(502, map[string]any{"error": "bad gateway"}),
+		creditsPlan(), subscriptionPlan(), usageSummaryPlan(12),
+	)
+	s.SetHost(h.call)
+	result, err := s.fetchQuota(jsonBytes(quotaRequest{StorageJSON: jsonBytes(credential), AuthID: credential.ID}))
+	if err != nil {
+		t.Fatalf("whoami outage must not fail the whole quota fetch: %v", err)
+	}
+	if balance := metricByKey(t, result, "command_code_balance"); balance["value"].(float64) != 460 {
+		t.Fatalf("balance = %#v", balance)
+	}
+	calls := h.snapshot()
+	if len(calls) != 6 {
+		t.Fatalf("expected 3 whoami attempts + 3 endpoint calls, got %d", len(calls))
+	}
+	// whoami 取不到 orgId 时后续调用不能带该参数（空值会被上游判为 Invalid UUID）。
+	for _, call := range calls[3:] {
+		if strings.Contains(call.url, "orgId") {
+			t.Fatalf("orgId must be omitted when whoami is unavailable: %s", call.url)
+		}
 	}
 }
 

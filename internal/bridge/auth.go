@@ -13,12 +13,19 @@ import (
 //
 //   - API Key 在 Studio（https://commandcode.ai/studio）创建，CLI 与 Provider API 共用同一把 key。
 //   - CLI 的浏览器登录（/studio/auth/cli + 本地 loopback 回调）依赖在宿主进程内监听端口，
-//     插件环境做不到，因此本插件只支持在管理面板手动粘贴 API Key。
+//     插件环境做不到；且授权页只接受 localhost 回调，因此登录改为「回环回调 + 用户粘贴
+//     回调 URL」（见 login.go）。
 //   - GET /alpha/whoami 可校验 key 并返回用户与组织信息（401 信封：{success:false, error:{...}}）。
 //   - key 无过期时间，auth.refresh 永远返回静态时间。
 const (
-	// whoamiCallTimeout 是凭据校验请求的时限。
-	whoamiCallTimeout = 20 * time.Second
+	// alphaCallTimeout 是单次 /alpha 请求的时限。
+	// 上游链路会偶发抖动（实测同账号同 key：credits 有时 1s，有时 47s 才出首字节，
+	// 也会直接连接重置），所以单次预算保持短，靠重试而不是干等来覆盖抖动。
+	alphaCallTimeout = 10 * time.Second
+	// alphaCallAttempts 是单次逻辑请求的最大尝试次数（含首次）。
+	alphaCallAttempts = 3
+	// alphaRetryBackoff 是两次尝试之间的基础间隔，按次数线性增长。
+	alphaRetryBackoff = 400 * time.Millisecond
 )
 
 // whoamiResponse 是 GET /alpha/whoami 的响应（CLI 的 projectUsageView 直接消费该形状）。
@@ -53,10 +60,45 @@ func statusOr(status int, fallback int) int {
 	return fallback
 }
 
-// hostRequest 通过宿主的流式 HTTP 回调完成一次普通请求。
+// retryableStatus 判断上游状态码是否值得重试：链路错误、5xx 与限流/超时。
+// 其余 4xx 是确定性结果（例如 key 无效），重试没有意义。
+func retryableStatus(status int) bool {
+	return status == http.StatusRequestTimeout || status == http.StatusTooManyRequests || status >= 500
+}
+
+// waitBeforeRetry 等待退避间隔；插件开始关闭时立即返回 false。
+func (s *Service) waitBeforeRetry(delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-s.stopCh:
+		return false
+	}
+}
+
+// hostRequest 通过宿主的流式 HTTP 回调完成一次普通请求，抖动时自动重试。
 // 这里刻意复用 host.http.do_stream 而不是 host.http.do：本插件的目录请求
 // 已经走通这条路径，避免依赖尚未实证的 host.http.do 响应结构。
 func (s *Service) hostRequest(callbackID, method, rawURL string, headers http.Header, body []byte) (int, []byte, error) {
+	var status int
+	var payload []byte
+	var err error
+	for attempt := 1; attempt <= alphaCallAttempts; attempt++ {
+		status, payload, err = s.hostRequestOnce(callbackID, method, rawURL, headers, body)
+		if err == nil && !retryableStatus(status) {
+			return status, payload, nil
+		}
+		if attempt < alphaCallAttempts && !s.waitBeforeRetry(time.Duration(attempt)*alphaRetryBackoff) {
+			break
+		}
+	}
+	return status, payload, err
+}
+
+// hostRequestOnce 发出一次不重试的请求。
+func (s *Service) hostRequestOnce(callbackID, method, rawURL string, headers http.Header, body []byte) (int, []byte, error) {
 	payload := map[string]any{"method": method, "url": rawURL, "headers": headers}
 	if len(body) > 0 {
 		payload["body"] = body
@@ -64,7 +106,7 @@ func (s *Service) hostRequest(callbackID, method, rawURL string, headers http.He
 	if callbackID != "" {
 		payload["host_callback_id"] = callbackID
 	}
-	up, err := s.openUpstream(payload, time.Now().Add(whoamiCallTimeout))
+	up, err := s.openUpstream(payload, time.Now().Add(alphaCallTimeout))
 	if err != nil {
 		return 0, nil, err
 	}
@@ -101,14 +143,4 @@ func (s *Service) verifyAPIKey(callbackID, key string) (whoamiResponse, error) {
 		return whoamiResponse{}, fail(502, "Command Code 未返回用户信息")
 	}
 	return who, nil
-}
-
-// loginUnsupported 是对 auth.login.start / auth.login.poll 的统一回复：
-// Command Code 的官方浏览器登录依赖本地回调端口，插件进程内无法提供，
-// 引导用户改用管理面板粘贴 API Key。
-func loginUnsupported() map[string]any {
-	return map[string]any{
-		"Status":  "error",
-		"Message": "Command Code 暂不支持浏览器登录：请在插件管理控制台的「凭据」中粘贴 Studio 生成的 API Key（https://commandcode.ai/studio）。",
-	}
 }

@@ -36,10 +36,13 @@ type Service struct {
 	logWriteError string
 	// modelEndpoints 记录上游模型 -> Provider API 端点列表（/chat/completions、/messages）。
 	modelEndpoints map[string][]string
+	loginMu        sync.Mutex
+	// loginSessions 是浏览器登录的进行中会话（state -> session）。
+	loginSessions map[string]*loginSession
 }
 
 func NewService() *Service {
-	s := &Service{cfg: defaultConfig(), creds: map[string]Credential{}, authFiles: map[string]string{}, streams: map[string]struct{}{}, revoked: map[string]bool{}, stopCh: make(chan struct{}), modelEndpoints: map[string][]string{}}
+	s := &Service{cfg: defaultConfig(), creds: map[string]Credential{}, authFiles: map[string]string{}, streams: map[string]struct{}{}, revoked: map[string]bool{}, stopCh: make(chan struct{}), modelEndpoints: map[string][]string{}, loginSessions: map[string]*loginSession{}}
 	for _, model := range defaultAnthropicModels {
 		s.modelEndpoints[model] = []string{"/messages"}
 	}
@@ -99,6 +102,12 @@ func (s *Service) modelNeedsAnthropic(upstreamID string) bool {
 	s.mu.RLock()
 	endpoints := s.modelEndpoints[upstreamID]
 	s.mu.RUnlock()
+	return modelNeedsAnthropicBy(upstreamID, endpoints)
+}
+
+// modelNeedsAnthropicBy 是 modelNeedsAnthropic 的纯函数形式：
+// 目录为空时按命名兜底，否则以 supported_endpoints 精确判定。
+func modelNeedsAnthropicBy(upstreamID string, endpoints []string) bool {
 	if len(endpoints) == 0 {
 		lower := strings.ToLower(upstreamID)
 		return strings.HasPrefix(lower, "claude") || strings.HasPrefix(lower, "anthropic/")
@@ -169,9 +178,9 @@ func (s *Service) Handle(method string, raw json.RawMessage) (any, error) {
 	case "auth.parse":
 		return s.parseAuth(raw)
 	case "auth.login.start":
-		return loginUnsupported(), nil
+		return s.startHostLogin(raw)
 	case "auth.login.poll":
-		return loginUnsupported(), nil
+		return s.pollHostLogin(raw)
 	case "auth.refresh":
 		return s.refreshAuth(raw)
 	case "quota.identifier":

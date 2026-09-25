@@ -239,7 +239,7 @@
           <p class="inline-state" id="modelState"></p>
         </div>
         <div class="panel">
-          <div class="panel-head"><div><h2>凭据</h2><p class="panel-hint">仅显示名称和配置状态</p></div><button class="button compact primary" id="openCredential" type="button">添加凭据</button></div>
+          <div class="panel-head"><div><h2>凭据</h2><p class="panel-hint">仅显示名称和配置状态</p></div><div class="row-actions"><button class="button compact" id="openLogin" type="button">浏览器登录</button><button class="button compact primary" id="openCredential" type="button">添加凭据</button></div></div>
           <div id="credentialList" aria-live="polite"><div class="empty">正在读取凭据…</div></div>
           <p class="inline-state" id="credentialState"></p>
         </div>
@@ -297,6 +297,20 @@
       <p class="inline-state" id="credentialDialogState" role="alert"></p>
       <div class="dialog-actions"><button class="button" id="cancelCredential" type="button">取消</button><button class="button primary" id="saveCredential" type="submit">添加凭据</button></div>
     </form>
+  </dialog>
+  <dialog id="loginDialog" aria-labelledby="loginDialogTitle">
+    <h2 id="loginDialogTitle">浏览器登录 Command Code</h2>
+    <p class="panel-hint" id="loginHint">Command Code 的授权页只接受 localhost 回调，授权后浏览器会停在一个打不开的本地地址（127.0.0.1），这是正常的。参数是以表单（POST）提交的，<b>地址栏里看不到</b>：按 F12 → Network → 找到发往 127.0.0.1 的那条回调请求，在 Payload / Form Data 里复制 <span class="mono">apiKey=…&amp;state=…</span> 整段；若地址栏恰好带着参数，直接复制整个 URL 也可以。</p>
+    <form class="form-stack" autocomplete="off" onsubmit="return false">
+      <div class="field"><label for="loginLabel">凭据名称（可选）</label><input class="control" id="loginLabel" maxlength="80" placeholder="默认使用 Command Code 用户名"></div>
+      <div class="dialog-actions"><button class="button" id="cancelLogin" type="button">取消</button><button class="button primary" id="startLogin" type="button">打开授权页面</button></div>
+    </form>
+    <div class="field">
+      <label for="loginCallbackURL">第 2 步：粘贴授权结果</label>
+      <input class="control mono" id="loginCallbackURL" placeholder="apiKey=…&state=…（F12 → Network → Payload），或完整回调 URL">
+      <div class="dialog-actions"><button class="button" id="copyLoginLink" type="button">复制授权链接</button><button class="button primary" id="completeLogin" type="button">完成登录</button></div>
+    </div>
+    <p class="inline-state" id="loginState" role="alert"></p>
   </dialog>
   <div class="toast" id="toast" role="status" hidden></div>
 
@@ -848,6 +862,53 @@
       $('credentialLabel').focus();
     }
     $('openCredential').addEventListener('click', () => openCredentialDialog());
+    $('openLogin').addEventListener('click', () => {
+      $('loginLabel').value = '';
+      $('loginCallbackURL').value = '';
+      $('loginState').textContent = '';
+      state.loginURL = '';
+      $('loginDialog').showModal();
+    });
+    $('cancelLogin').addEventListener('click', () => $('loginDialog').close());
+    $('loginDialog').addEventListener('cancel', (event) => { if (state.loginBusy) event.preventDefault(); });
+    $('startLogin').addEventListener('click', async () => {
+      if (state.loginBusy) return;
+      state.loginBusy = true;
+      $('startLogin').disabled = true;
+      $('loginState').textContent = '正在创建登录会话…';
+      try {
+        const label = $('loginLabel').value.trim();
+        const session = await api('/login/session', { method: 'POST', body: JSON.stringify(label ? { label } : {}) });
+        state.loginURL = session.url;
+        window.open(session.url, '_blank');
+        $('loginState').textContent = '已打开授权页面。授权后浏览器会停在一个打不开的本地地址（正常），按 F12 → Network 找到那条回调请求，复制 Payload / Form Data 里的 apiKey=…&state=… 粘到下面。';
+      } catch (error) { $('loginState').textContent = `发起登录失败：${error.message}`; }
+      finally { state.loginBusy = false; $('startLogin').disabled = false; }
+    });
+    $('copyLoginLink').addEventListener('click', async () => {
+      if (!state.loginURL) { $('loginState').textContent = '请先点「打开授权页面」生成授权链接'; return; }
+      try { await navigator.clipboard.writeText(state.loginURL); $('loginState').textContent = '授权链接已复制，可在任意浏览器打开并完成授权。'; }
+      catch { $('loginState').textContent = `请手动打开授权链接：${state.loginURL}`; }
+    });
+    $('completeLogin').addEventListener('click', async () => {
+      const url = $('loginCallbackURL').value.trim();
+      if (!url) { $('loginState').textContent = '请先粘贴回调 URL'; return; }
+      if (state.loginBusy) return;
+      state.loginBusy = true;
+      $('completeLogin').disabled = true;
+      $('loginState').textContent = '正在完成登录…';
+      try {
+        await finishLogin(url);
+        $('loginDialog').close();
+      } catch (error) { $('loginState').textContent = `完成登录失败：${error.message}`; }
+      finally { state.loginBusy = false; $('completeLogin').disabled = false; }
+    });
+    async function finishLogin(callbackURL) {
+      const result = await api('/login/complete', { method: 'POST', body: JSON.stringify({ url: callbackURL, label: $('loginLabel').value.trim() }) });
+      toast(`浏览器登录成功：${result.label || result.id}`);
+      renderCredentials(await api('/credentials'));
+      await loadStatus();
+    }
     $('cancelCredential').addEventListener('click', () => $('credentialDialog').close());
     $('credentialDialog').addEventListener('cancel', (event) => { if (state.credentialBusy) event.preventDefault(); });
     $('credentialDialog').addEventListener('close', () => {

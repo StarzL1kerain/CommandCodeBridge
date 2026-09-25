@@ -8,3 +8,4 @@
 .env
 *credentials*.json
 *.jsonl
+.deploy/

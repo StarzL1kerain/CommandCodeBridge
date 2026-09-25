@@ -433,18 +433,31 @@ func TestShutdownWaitsForActiveStreams(t *testing.T) {
 	}
 }
 
-func TestLoginIsUnsupportedWithGuidance(t *testing.T) {
+func TestLoginStartReturnsStudioURLForHostFlow(t *testing.T) {
 	s := registeredService(t, "")
-	response, err := s.Handle("auth.login.start", jsonBytes(map[string]any{}))
+	result, err := s.Handle("auth.login.start", jsonBytes(map[string]any{"Provider": Provider}))
 	if err != nil {
-		t.Fatalf("login.start: %v", err)
+		t.Fatal(err)
 	}
-	message := str(response.(map[string]any)["Message"])
-	if !strings.Contains(message, "API Key") {
-		t.Fatalf("login message = %q", message)
+	started := object(result)
+	authURL, state := str(started["URL"]), str(started["State"])
+	if state == "" || !strings.HasPrefix(authURL, "https://commandcode.ai/studio/auth/cli?") {
+		t.Fatalf("login.start = %#v", result)
 	}
-	if _, err := s.Handle("auth.login.poll", jsonBytes(map[string]any{})); err != nil {
-		t.Fatalf("login.poll: %v", err)
+	// 上游只接受 localhost 回调，无论登录从哪里发起都用本地回环地址。
+	values, e := url.ParseQuery(strings.TrimPrefix(authURL, "https://commandcode.ai/studio/auth/cli?"))
+	if e != nil {
+		t.Fatal(e)
+	}
+	if values.Get("callback") != manualCallback || values.Get("state") != state {
+		t.Fatalf("auth url params = %#v", values)
+	}
+	polled, err := s.Handle("auth.login.poll", jsonBytes(map[string]any{"Provider": Provider, "State": state}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if object(polled)["Status"] != "pending" {
+		t.Fatalf("login.poll = %#v", polled)
 	}
 }
 

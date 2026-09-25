@@ -56,9 +56,10 @@ func (s *Service) prepare(r ExecutorRequest) (prepared, error) {
 		if e != nil {
 			return prepared{}, e
 		}
-	} else {
-		j["model"] = up
 	}
+	// 无论哪条协议路径，发给上游的 model 必须是 UpstreamID，
+	// 客户端侧的带前缀名（command-code/claude-sonnet-5）不能透传。
+	j["model"] = up
 	return prepared{payload: j, credential: c, upstream: up, anthropic: anthropic}, nil
 }
 func headers(c Credential) http.Header {

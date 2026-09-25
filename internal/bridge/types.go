@@ -111,7 +111,9 @@ type Config struct {
 }
 
 func defaultConfig() Config {
-	return Config{DataDir: "plugins/commandcodebridge-data", BaseURL: "https://api.commandcode.ai/provider/v1", Models: []Model{{ID: "deepseek-v4-flash", UpstreamID: "deepseek/deepseek-v4-flash"}, {ID: "deepseek/deepseek-v4-flash", UpstreamID: "deepseek/deepseek-v4-flash"}, {ID: "claude-sonnet-5", UpstreamID: "claude-sonnet-5"}}, NonstreamMode: "stream-aggregate", TimeoutSeconds: 180, LogRetention: 1000, MaxResponseBytes: 16 << 20}
+	// 裸名 claude-* 会与 CPA 内置 Claude 模型撞名（插件注册被忽略、请求报 unknown provider），
+	// Claude 系模型一律以 command-code/ 前缀暴露。
+	return Config{DataDir: "plugins/commandcodebridge-data", BaseURL: "https://api.commandcode.ai/provider/v1", Models: []Model{{ID: "deepseek-v4-flash", UpstreamID: "deepseek/deepseek-v4-flash"}, {ID: "deepseek/deepseek-v4-flash", UpstreamID: "deepseek/deepseek-v4-flash"}, {ID: "command-code/claude-sonnet-5", UpstreamID: "claude-sonnet-5"}}, NonstreamMode: "stream-aggregate", TimeoutSeconds: 180, LogRetention: 1000, MaxResponseBytes: 16 << 20}
 }
 func (c *Config) validate() error {
 	u, e := url.Parse(c.BaseURL)
@@ -181,6 +183,42 @@ type LogEntry struct {
 func jsonBytes(v any) []byte      { b, _ := json.Marshal(v); return b }
 func str(v any) string            { s, _ := v.(string); return s }
 func object(v any) map[string]any { m, _ := v.(map[string]any); return m }
+
+// credentialID 用账号派生凭据 ID。内置供应商的凭据名能直接看出是哪个账号
+// （如 claude-<邮箱>.json），这里保持一致；更重要的是：同一账号重复登录/重新粘贴
+// 会落到同一个 ID，从而覆盖同一份凭据，而不是每操作一次就多出一条。
+func credentialID(userID, userName string) string {
+	if slug := slugifyAccount(userName); slug != "" {
+		return PluginID + "-" + slug
+	}
+	if slug := slugifyAccount(userID); slug != "" {
+		return PluginID + "-" + slug
+	}
+	return PluginID + "-" + id()
+}
+
+// slugifyAccount 保留可安全用作文件名的字符（凭据 ID 会拼进 auth-dir 的文件名），
+// 其余字符折叠成 '-'；必须与 deleteCredential 的路径校验保持一致。
+func slugifyAccount(value string) string {
+	var b strings.Builder
+	dashPending := false
+	for _, r := range strings.TrimSpace(value) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '.':
+			b.WriteRune(r)
+			dashPending = false
+		default:
+			if !dashPending && b.Len() > 0 {
+				b.WriteByte('-')
+				dashPending = true
+			}
+		}
+		if b.Len() >= 48 {
+			break
+		}
+	}
+	return strings.Trim(b.String(), "-.")
+}
 func number(v any) int64 {
 	switch n := v.(type) {
 	case float64:

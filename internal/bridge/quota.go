@@ -9,18 +9,21 @@ import (
 	"time"
 )
 
-// Command Code 的用量信息来自四个内部只读接口（CLI 1.65.2 逆向，/usage 命令同款调用序列）：
+// Command Code 的用量信息来自四个内部只读接口（CLI 1.65.2 逆向 + 实测复核）：
 //
-//	GET {alpha}/alpha/whoami?limits=1            -> {user, org}            用户与组织
-//	GET {alpha}/alpha/billing/credits?orgId=      -> {credits:{...}}        剩余积分与窗口上限
-//	GET {alpha}/alpha/billing/subscriptions?orgId= -> {data:{planId, 周期}}  订阅与周期
-//	GET {alpha}/alpha/usage/summary?orgId=&since= -> {totalCost}           周期内已花费
+//	GET {alpha}/alpha/whoami?limits=1                 -> {user, org}                     用户与组织
+//	GET {alpha}/alpha/billing/credits[?orgId=]        -> {credits:{}, windowLimits:{}}    剩余积分与窗口上限
+//	GET {alpha}/alpha/billing/subscriptions[?orgId=]  -> {data:{planId, 周期}}            订阅与周期
+//	GET {alpha}/alpha/usage/summary[?orgId=][&since=] -> {totalCost}                     周期内已花费
 //
-// 全部使用 Authorization: Bearer <API Key>。字段形状依据 CLI 的 projectUsageView /
-// fetchUsageCredits / fetchUsageSubscription / fetchUsageSummary 消费路径逐字段核对：
-//   - credits.credits.planId、windowLimits.fiveHour.{used,cap,resetAt}
-//   - subscriptions.data.currentPeriodStart（多一层 data 包装，其余接口没有）
-//   - summary.totalCost
+// 全部使用 Authorization: Bearer <API Key>。实测（2026-09-25 复核）确认的形状：
+//   - credits 只含 belowThreshold/creditThreshold/monthlyCredits/purchasedCredits/freeCredits；
+//     **windowLimits 与 credits 平级**，不在 credits 里面。曾按嵌套解析，导致 limited 恒为
+//     false、窗口桶永远为空，面板上看不到 5 小时/7 天额度。
+//   - 套餐 planId 只出现在 subscriptions.data.planId。
+//   - orgId 可选：个人账户 whoami 返回 "org":null，此时**不能带该参数**，带上空值会返回
+//     400 Invalid UUID at "orgId"；有组织时才带上。
+//   - subscriptions 多包一层 data（其余接口没有），whoami 与 summary 是平铺对象。
 // used/cap 是积分（1 积分 ≈ 1 美元用量），resetAt 是 epoch 毫秒（CLI 直接与 Date.now() 比较）。
 
 // planDisplayNames 与 CLI 的 planId -> 展示名映射保持一致。
@@ -43,9 +46,15 @@ var quotaWindows = []struct {
 	window string
 	label  string
 }{
-	{"fiveHour", "five_hour", "5 小时"},
-	{"weekly", "seven_day", "7 天"},
+	{"fiveHour", "five_hour", "5 小时窗口"},
+	{"weekly", "seven_day", "7 天窗口"},
 }
+
+// monthlyWindowToken 是月度额度的 window token（补丁版面板可识别）。
+// 月度窗口不在 windowLimits 里——上游只给剩余的月额度 credits.monthlyCredits，
+// 上限必须用「剩余 + 本周期已用」还原：实测两个数相加正好是整份月额度
+// （34.903247015 + 35.096752985 = 70），与官方 CLI /usage 里的 "Monthly Limit" 一致。
+const monthlyWindowToken = "monthly"
 
 type windowLimit struct {
 	Used    float64 `json:"used"`
@@ -53,18 +62,20 @@ type windowLimit struct {
 	ResetAt float64 `json:"resetAt"`
 }
 
+type windowLimits struct {
+	Limited  bool         `json:"limited"`
+	FiveHour *windowLimit `json:"fiveHour"`
+	Weekly   *windowLimit `json:"weekly"`
+}
+
 type creditsPayload struct {
 	Credits struct {
-		PlanID           string `json:"planId"`
-		MonthlyCredits   any    `json:"monthlyCredits"`
-		PurchasedCredits any    `json:"purchasedCredits"`
-		FreeCredits      any    `json:"freeCredits"`
-		WindowLimits     struct {
-			Limited  bool         `json:"limited"`
-			FiveHour *windowLimit `json:"fiveHour"`
-			Weekly   *windowLimit `json:"weekly"`
-		} `json:"windowLimits"`
+		MonthlyCredits   any `json:"monthlyCredits"`
+		PurchasedCredits any `json:"purchasedCredits"`
+		FreeCredits      any `json:"freeCredits"`
 	} `json:"credits"`
+	// WindowLimits 与 credits 平级，不是它的子对象。
+	WindowLimits windowLimits `json:"windowLimits"`
 }
 
 type subscriptionPayload struct {
@@ -78,6 +89,9 @@ type subscriptionPayload struct {
 
 type usageSummaryPayload struct {
 	TotalCost any `json:"totalCost"`
+	// TotalMonthlyCredits 是本周期里计入月额度的部分。官方 CLI 的 "Monthly Limit"
+	// 用它当已用量，配合 credits.monthlyCredits（剩余）还原出月额度上限。
+	TotalMonthlyCredits any `json:"totalMonthlyCredits"`
 }
 
 // quotaRequest 对应宿主的 QuotaFetchRequest / QuotaResetRequest。
@@ -204,10 +218,14 @@ func (s *Service) fetchQuota(raw json.RawMessage) (any, error) {
 	token := c.bearerToken()
 
 	who, err := s.verifyAPIKey(r.HostCallbackID, token)
-	if err != nil {
+	// whoami 只用来取 orgId。它抖动或超时不该让整个额度视图失败：个人账户本来就不带
+	// orgId，凭据是否有效由后面的 credits/subscriptions 判定。
+	orgID := ""
+	if err == nil {
+		orgID = strings.TrimSpace(who.Org.ID)
+	} else if status := statusOf(err); status == http.StatusUnauthorized || status == http.StatusForbidden {
 		return nil, err
 	}
-	orgID := strings.TrimSpace(who.Org.ID)
 	query := url.Values{}
 	if orgID != "" {
 		query.Set("orgId", orgID)
@@ -237,36 +255,33 @@ func (s *Service) fetchQuota(raw json.RawMessage) (any, error) {
 
 func buildQuotaResponse(credits creditsPayload, sub subscriptionPayload, summary usageSummaryPayload, now time.Time) any {
 	c := credits.Credits
+	limits := credits.WindowLimits
 	buckets := []any{}
-	if c.WindowLimits.Limited {
+	if limits.Limited {
 		for _, window := range quotaWindows {
 			var limit *windowLimit
 			if window.apiKey == "fiveHour" {
-				limit = c.WindowLimits.FiveHour
+				limit = limits.FiveHour
 			} else {
-				limit = c.WindowLimits.Weekly
+				limit = limits.Weekly
 			}
 			if limit == nil || limit.Cap <= 0 {
 				continue
 			}
-			// 上游给出已用积分与上限，宿主只认 remainingFraction（0~1）。
-			remaining := 1 - limit.Used/limit.Cap
-			if remaining < 0 {
-				remaining = 0
-			}
-			if remaining > 1 {
-				remaining = 1
-			}
-			bucket := map[string]any{
-				"window":            window.window,
-				"remainingFraction": remaining,
-				"description":       fmt.Sprintf("%s窗口已用 %.1f%%（%.2f / %.2f 积分）", window.label, limit.Used/limit.Cap*100, limit.Used, limit.Cap),
-			}
+			reset := ""
 			if limit.ResetAt > 0 {
-				bucket["resetTime"] = time.UnixMilli(int64(limit.ResetAt)).UTC().Format(time.RFC3339Nano)
+				reset = time.UnixMilli(int64(limit.ResetAt)).UTC().Format(time.RFC3339Nano)
 			}
-			buckets = append(buckets, bucket)
+			buckets = append(buckets, quotaBucket(window.window, window.label, limit.Used, limit.Cap, reset))
 		}
+	}
+	// 月度窗口：上游不给上限，用「本周期已用 + 剩余月额度」还原。
+	monthlyUsed := floatOf(summary.TotalMonthlyCredits)
+	if monthlyUsed == 0 {
+		monthlyUsed = floatOf(summary.TotalCost)
+	}
+	if monthlyCap := monthlyUsed + floatOf(c.MonthlyCredits); monthlyCap > 0 {
+		buckets = append(buckets, quotaBucket(monthlyWindowToken, "月度额度", monthlyUsed, monthlyCap, strings.TrimSpace(sub.Data.CurrentPeriodEnd)))
 	}
 
 	total := floatOf(c.MonthlyCredits) + floatOf(c.PurchasedCredits) + floatOf(c.FreeCredits)
@@ -301,9 +316,6 @@ func buildQuotaResponse(credits creditsPayload, sub subscriptionPayload, summary
 		response["summary"] = summary2
 	}
 	planName := planDisplayName(strings.TrimSpace(sub.Data.PlanID))
-	if planName == "" {
-		planName = planDisplayName(strings.TrimSpace(c.PlanID))
-	}
 	if planName != "" {
 		response["subscription"] = map[string]any{
 			"plan":     planName,
@@ -311,6 +323,32 @@ func buildQuotaResponse(credits creditsPayload, sub subscriptionPayload, summary
 		}
 	}
 	return response
+}
+
+// quotaBucket 组装一个额度桶。宿主只认 remainingFraction（0~1 的"剩余"比例），
+// 描述里刻意用"已用"口径，与官方 CLI /usage 的 Usage Limits 对得上。
+func quotaBucket(window, label string, used, cap float64, resetTime string) map[string]any {
+	bucket := map[string]any{
+		"window":            window,
+		"remainingFraction": clampFraction(1 - used/cap),
+		"description":       fmt.Sprintf("%s已用 %.1f%%（%.2f / %.2f 积分）", label, used/cap*100, used, cap),
+	}
+	if resetTime != "" {
+		bucket["resetTime"] = resetTime
+	}
+	return bucket
+}
+
+// clampFraction 把比例夹到 0~1：宿主会丢弃没有有效 remainingFraction 的桶。
+func clampFraction(value float64) float64 {
+	switch {
+	case value < 0:
+		return 0
+	case value > 1:
+		return 1
+	default:
+		return value
+	}
 }
 
 // planDisplayName 把上游 planId 翻译为 CLI 同款展示名，未收录的原样返回。

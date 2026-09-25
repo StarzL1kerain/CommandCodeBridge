@@ -16,12 +16,15 @@ var ui embed.FS
 
 const apiBase = "/v0/management/commandcodebridge"
 
+// consolePath 是插件控制台页面，宿主以 /v0/resource/plugins/<pluginID>/console 提供。
+const consolePath = "/v0/resource/plugins/" + PluginID + "/console"
+
 func (s *Service) registerManagement(raw json.RawMessage) (any, error) {
 	routes := []map[string]string{}
 	for _, p := range []string{"status", "logs", "models", "config", "credentials", "quota"} {
 		routes = append(routes, map[string]string{"Method": "GET", "Path": apiBase + "/" + p})
 	}
-	for _, p := range []string{"models/refresh", "credentials"} {
+	for _, p := range []string{"models/refresh", "credentials", "login/session", "login/complete"} {
 		routes = append(routes, map[string]string{"Method": "POST", "Path": apiBase + "/" + p})
 	}
 	for _, p := range []string{"models", "config", "credentials"} {
@@ -38,7 +41,7 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 	if e := json.Unmarshal(raw, &r); e != nil {
 		return nil, e
 	}
-	if r.Method == "GET" && r.Path == "/v0/resource/plugins/"+PluginID+"/console" {
+	if r.Method == "GET" && r.Path == consolePath {
 		b, e := ui.ReadFile("ui/index.html")
 		if e != nil {
 			return nil, e
@@ -108,6 +111,10 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 		return managementJSON(200, s.managementQuota(r.Query.Get("id")))
 	case "POST /credentials":
 		return s.importCredential(r)
+	case "POST /login/session":
+		return s.startLoginSession(r)
+	case "POST /login/complete":
+		return s.completeLogin(r)
 	case "PUT /credentials":
 		return s.updateCredential(r)
 	case "DELETE /credentials":
@@ -204,7 +211,7 @@ func (s *Service) importCredential(r ManagementRequest) (any, error) {
 	if e != nil {
 		return managementJSON(statusOf(e), map[string]any{"error": safeError(e)})
 	}
-	c := Credential{Type: Provider, ID: PluginID + "-" + id(), Label: strings.TrimSpace(in.Label), APIKey: in.APIKey, AccountID: strings.TrimSpace(who.User.ID), RequestScopedErrors: requestErrorRules()}
+	c := Credential{Type: Provider, ID: credentialID(who.User.ID, who.displayName()), Label: strings.TrimSpace(in.Label), APIKey: in.APIKey, AccountID: strings.TrimSpace(who.User.ID), RequestScopedErrors: requestErrorRules()}
 	if c.Label == "" {
 		c.Label = who.displayName()
 	}
@@ -349,7 +356,13 @@ func (s *Service) refreshModels(callbackID string) ([]Model, error) {
 			}
 		}
 		endpoints[upstreamID] = supported
-		models = append(models, Model{ID: upstreamID, UpstreamID: upstreamID})
+		// Claude 系模型（仅 /messages）注册为 command-code/ 前缀名，
+		// 避免与 CPA 内置 Claude 模型撞名导致注册被忽略。
+		modelID := upstreamID
+		if modelNeedsAnthropicBy(upstreamID, supported) {
+			modelID = Provider + "/" + upstreamID
+		}
+		models = append(models, Model{ID: modelID, UpstreamID: upstreamID})
 	}
 	if len(models) == 0 {
 		return nil, fail(502, "Command Code 目录未返回有效模型")
