@@ -75,6 +75,10 @@ Command Code 的鉴权只有一种形态：`Authorization: Bearer <API Key>`，k
 
 补丁版面板会把 `window` token 翻译成标签，识别 `five_hour` / `weekly` / `seven_day` / `monthly`。换到 Command Code 无需再改面板。
 
+打上补丁后的实际效果（套餐、余额、本周期已花费、周期剩余天数，以及 5 小时 / 7 天 / 月度三个窗口）：
+
+![凭据卡片上的额度区块：套餐 GOAT、剩余积分 US$34.90、本周期已花费 US$35.10、周期剩余 23.4 天，下方为 5 小时剩余 100%、7 天剩余 0%、月度剩余 49.9% 三个进度条，右下角是「刷新额度」按钮](预期效果.png)
+
 ## 安装
 
 需要 CLIProxyAPI v7.3.12 或兼容的插件 ABI，且宿主的 `plugins.enabled` 为 `true`。
