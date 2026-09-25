@@ -142,7 +142,7 @@ docker build --platform linux/amd64 -f Dockerfile.build --output type=local,dest
 
 ## 版本与开发记录
 
-本文档描述 **v0.1.0** 的功能集。
+本文档描述 **v0.1.1** 的功能集。v0.1.1 相对 v0.1.0 的改动：浏览器登录落地（宿主 `auth.login.start/poll` + 回环回调手动粘贴）、额度口径修正（`windowLimits` 与 `credits` 平级、新增月度窗口、`orgId` 可选）、凭据按账号命名、`/alpha` 请求自动重试、`/alpha` 抖动容错，以及注册元数据补上 `Logo`。
 
 Command Code 侧的实证事实（Provider API 形状、`/alpha/*` 用量接口、登录流程、错误信封）由官方文档、`command-code` npm 包 1.65.2 逆向与无鉴权实测交叉确认：
 

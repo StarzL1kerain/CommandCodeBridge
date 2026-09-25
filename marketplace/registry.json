@@ -7,7 +7,7 @@
       "logo": "https://raw.githubusercontent.com/StarzL1kerain/CommandCodeBridge/main/logo.png",
       "description": "把 Command Code 订阅接入 CPA：粘贴 API Key 即可用满血模型，Claude 系模型自动走 Anthropic 端点并完成协议转换，积分余额与 5 小时/7 天窗口在面板可见。 / Connect Command Code subscriptions to CPA: paste an API key to use full-power models; Claude models are routed to the Anthropic endpoint with automatic protocol translation; credit balance and 5-hour/7-day windows are visible in the dashboard.",
       "author": "StarzL1kerain",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "repository": "https://github.com/StarzL1kerain/CommandCodeBridge",
       "homepage": "https://github.com/StarzL1kerain/CommandCodeBridge",
       "license": "MIT",
