@@ -108,7 +108,9 @@ plugins:
 
 > 这条路要求宿主机能访问 `raw.githubusercontent.com`（读 registry）与 `github.com`（下 Release 资产）。两种常见失败：
 > 网络抖动时 `/v0/management/plugin-store` 会超时或 502；商城解析"最新 Release"要走 GitHub API，未鉴权时**每个出口 IP 每小时只有 60 次**配额，
-> 容易撞上 `GitHub API rate limited`。这两种情况都用手动方式绕开即可；或给 CPA 配 `proxy-url` 走代理。
+> 容易撞上 `GitHub API rate limited`。这两种情况都用手动方式绕开即可。
+> 注意宿主的出口 IP 由配置里的**全局 `proxy-url`** 决定 —— 如果那个代理出口本身被 GitHub 限流，
+> 商店会持续失败（面板自动下载也会静默回退成原版），此时要么换出口，要么就用手动安装。
 
 ### 方式二：手动安装（离线，网络不稳时推荐）
 
