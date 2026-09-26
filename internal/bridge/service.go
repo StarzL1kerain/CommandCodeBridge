@@ -81,6 +81,7 @@ func atomicJSON(path string, v any) error {
 	defer os.Remove(tmp)
 	return os.Rename(tmp, path)
 }
+
 // defaultAnthropicModels 是 /provider/v1/models 中 supported_endpoints 仅有 /messages
 // 的模型快照（2026-09-25 实测）。目录刷新会用最新结果替换；快照用于宿主离线启动时
 // 仍能正确路由 Claude 系模型。
@@ -224,16 +225,16 @@ func (s *Service) Handle(method string, raw json.RawMessage) (any, error) {
 		}
 		s.active.Wait()
 		return map[string]any{}, nil
-		default:
-			return nil, fail(400, "不支持的插件方法："+method)
-		}
-		}
-		func (s *Service) begin() error {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		if s.stopped {
-			return fail(503, "CommandCodeBridge 正在关闭")
-		}
+	default:
+		return nil, fail(400, "不支持的插件方法："+method)
+	}
+}
+func (s *Service) begin() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopped {
+		return fail(503, "CommandCodeBridge 正在关闭")
+	}
 	s.active.Add(1)
 	return nil
 }
@@ -389,13 +390,70 @@ func (s *Service) appendLog(entry LogEntry) {
 	}
 	s.logWriteError = safeError(atomicJSON(filepath.Join(s.cfg.DataDir, "requests.json"), s.logs))
 }
+
+// credentials 列出插件托管的凭据。列出前会核对 auth-dir 里的文件是否还在：
+// 凭据文件被外部删除（例如在宿主的认证文件页里删掉）时，内存里的记录会变成一条
+// "列表里还显示、删除又因读不到文件而失败"的幽灵记录，这里顺手把它清掉。
 func (s *Service) credentials() []map[string]any {
+	type entry struct {
+		c    Credential
+		file string
+	}
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	out := []map[string]any{}
+	dir := s.authDir
+	items := make([]entry, 0, len(s.creds))
 	for _, c := range s.creds {
-		out = append(out, map[string]any{"id": c.ID, "label": c.Label, "enabled": !c.Disabled})
+		file := s.authFiles[c.ID]
+		if file == "" {
+			file = c.ID + ".json"
+		}
+		items = append(items, entry{c: c, file: file})
+	}
+	s.mu.RUnlock()
+	out := []map[string]any{}
+	stale := []entry{}
+	for _, it := range items {
+		if !authFileExists(dir, it.file) {
+			stale = append(stale, it)
+			continue
+		}
+		out = append(out, map[string]any{"id": it.c.ID, "label": it.c.Label, "enabled": !it.c.Disabled})
+	}
+	if len(stale) > 0 {
+		s.mu.Lock()
+		for _, it := range stale {
+			// 加锁期间文件可能又回来了（或刚被重新导入），不能误删。
+			if authFileExists(dir, it.file) {
+				continue
+			}
+			if current, ok := s.authFiles[it.c.ID]; ok && current != it.file {
+				continue
+			}
+			delete(s.creds, it.c.ID)
+			delete(s.authFiles, it.c.ID)
+		}
+		s.mu.Unlock()
+		for _, it := range stale {
+			s.appendLog(LogEntry{
+				ID:         id(),
+				Time:       time.Now(),
+				Model:      "(" + PluginID + " 凭据)",
+				Status:     410,
+				Credential: it.c.ID,
+				Error:      "凭据文件已不在 auth-dir，已从列表移除",
+			})
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return str(out[i]["id"]) < str(out[j]["id"]) })
 	return out
+}
+
+// authFileExists 判断凭据文件是否还在 auth-dir 里。目录未知时一律返回 true：
+// 宁可不清理，也不能在拿不到 auth-dir 时把全部凭据误判成幽灵记录。
+func authFileExists(dir, file string) bool {
+	if dir == "" || file == "" {
+		return true
+	}
+	_, err := os.Stat(filepath.Join(dir, file))
+	return err == nil || !os.IsNotExist(err)
 }

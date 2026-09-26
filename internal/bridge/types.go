@@ -67,6 +67,7 @@ type ManagementResponse struct {
 	Headers    http.Header
 	Body       []byte
 }
+
 // Credential 是一条 Command Code API Key 凭据。
 // Command Code 只使用长期 API Key（Studio 或 `cmd login` 产生，CLI 与 Provider API 共用），
 // 没有 OAuth 令牌与续期流程，因此令牌字段只有 api_key。

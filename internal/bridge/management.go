@@ -303,20 +303,32 @@ func (s *Service) deleteCredential(credentialID string) (any, error) {
 	}
 	path := filepath.Join(s.authDir, filename)
 	b, e := os.ReadFile(path)
+	if os.IsNotExist(e) {
+		// 文件已经不在（多半是在宿主的认证文件页里删过）。此时内存里的记录会变成
+		// 删不掉的幽灵记录：列表里还显示，删除又卡在这里。删除应当是幂等的。
+		s.forgetCredentialLocked(credentialID)
+		return managementJSON(200, map[string]any{"deleted": true, "alreadyMissing": true})
+	}
 	if e != nil {
-		return managementJSON(409, map[string]any{"error": "凭据文件不存在"})
+		return managementJSON(500, map[string]any{"error": "凭据文件读取失败：" + safeError(e)})
 	}
 	var disk Credential
 	if json.Unmarshal(b, &disk) != nil || disk.Type != Provider || disk.ID != c.ID {
 		return managementJSON(409, map[string]any{"error": "凭据文件归属校验失败"})
 	}
-	if e = os.Remove(path); e != nil {
+	if e = os.Remove(path); e != nil && !os.IsNotExist(e) {
 		return managementJSON(500, map[string]any{"error": "凭据删除失败"})
 	}
+	s.forgetCredentialLocked(credentialID)
+	return managementJSON(200, map[string]any{"deleted": true})
+}
+
+// forgetCredentialLocked 把凭据从内存状态里彻底移除，并记下删除记录。
+// 调用方必须持有 s.mu。
+func (s *Service) forgetCredentialLocked(credentialID string) {
 	delete(s.creds, credentialID)
 	delete(s.authFiles, credentialID)
 	s.revoked[credentialID] = true
-	return managementJSON(200, map[string]any{"deleted": true})
 }
 func (s *Service) refreshModels(callbackID string) ([]Model, error) {
 	if err := s.begin(); err != nil {

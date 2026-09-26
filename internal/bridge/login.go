@@ -12,8 +12,9 @@ import (
 
 // Command Code 的"终端登录"在 CLI 里是本地回环回调：CLI 在 127.0.0.1 起监听，
 // 授权页把 apiKey 通过浏览器重定向送回该端口（cli.mjs 逆向实证：
-//   /studio/auth/cli?callback=http://127.0.0.1:<port>/callback&state=...&mode=redirect
-//   回调参数 apiKey/state/userId/userName/keyName）。
+//
+//	/studio/auth/cli?callback=http://127.0.0.1:<port>/callback&state=...&mode=redirect
+//	回调参数 apiKey/state/userId/userName/keyName）。
 //
 // 关键约束（2026-09-25 实测）：授权页只接受 localhost 回调，其他地址一律返回
 // "Invalid Request ... Only localhost URLs are allowed for security"。

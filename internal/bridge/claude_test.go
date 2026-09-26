@@ -33,7 +33,7 @@ func TestModelNeedsAnthropicUsesCatalogThenFallback(t *testing.T) {
 
 func TestOpenAIToAnthropicConvertsSystemToolsAndToolResults(t *testing.T) {
 	source := map[string]any{
-		"model":    "claude-sonnet-5",
+		"model": "claude-sonnet-5",
 		"messages": []any{
 			map[string]any{"role": "system", "content": "be brief"},
 			map[string]any{"role": "user", "content": "hello"},
@@ -46,10 +46,10 @@ func TestOpenAIToAnthropicConvertsSystemToolsAndToolResults(t *testing.T) {
 		"tools": []any{map[string]any{"type": "function", "function": map[string]any{
 			"name": "lookup", "description": "search", "parameters": map[string]any{"type": "object", "properties": map[string]any{}},
 		}}},
-		"tool_choice": "required",
+		"tool_choice":           "required",
 		"max_completion_tokens": 512,
-		"stream":     true,
-		"provider":   "ignored",
+		"stream":                true,
+		"provider":              "ignored",
 	}
 	out, err := openAIToAnthropic(source)
 	if err != nil {
@@ -104,7 +104,7 @@ func TestOpenAIToAnthropicConvertsSystemToolsAndToolResults(t *testing.T) {
 
 func TestAnthropicToOpenAIResponseMapsBlocksStopReasonAndUsage(t *testing.T) {
 	source := map[string]any{
-		"id": "msg_1",
+		"id":   "msg_1",
 		"type": "message",
 		"content": []any{
 			map[string]any{"type": "thinking", "thinking": "ponder"},
@@ -162,9 +162,9 @@ func TestClaudeModelRoutesToMessagesAndTranslatesResponse(t *testing.T) {
 	var capturedMethod, capturedURL, capturedBody string
 	h := newCaptureHost(jsonPlan(map[string]any{
 		"id": "msg_1", "type": "message", "role": "assistant",
-		"content":      []any{map[string]any{"type": "text", "text": "bonjour"}},
-		"stop_reason":  "end_turn",
-		"usage":        map[string]any{"input_tokens": 5, "output_tokens": 1},
+		"content":     []any{map[string]any{"type": "text", "text": "bonjour"}},
+		"stop_reason": "end_turn",
+		"usage":       map[string]any{"input_tokens": 5, "output_tokens": 1},
 	}))
 	h.capture = func(method, url, body string) {
 		capturedMethod, capturedURL, capturedBody = method, url, body
