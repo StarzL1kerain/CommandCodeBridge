@@ -189,7 +189,11 @@ docker build --platform linux/amd64 -f Dockerfile.build --output type=local,dest
 
 ## 版本与开发记录
 
-本文档描述 **v0.1.1** 的功能集。v0.1.1 相对 v0.1.0 的改动：浏览器登录落地（宿主 `auth.login.start/poll` + 回环回调手动粘贴）、额度口径修正（`windowLimits` 与 `credits` 平级、新增月度窗口、`orgId` 可选）、凭据按账号命名、`/alpha` 请求自动重试、`/alpha` 抖动容错，以及注册元数据补上 `Logo`。
+本文档描述 **v0.1.2** 的功能集。
+
+v0.1.2 修掉一条"删不掉的幽灵凭据记录"：在宿主的**认证文件页**里删掉凭据后，插件内存里的记录还在 —— 控制台照旧显示它，点删除又因为读不到文件返回 `409 凭据文件不存在`，既用不了也删不掉。现在删除是**幂等**的（文件已不在就清掉内存记录并返回成功），凭据列表每次读取也会核对 auth-dir、自动清掉文件已消失的记录并写一条 410 日志（拿不到 auth-dir 时不清理，避免误删）。另修掉被 CRLF 掩盖的 `gofmt` 问题（去掉 CRLF 后 `gofmt -l` 输出为空）。
+
+v0.1.1 相对 v0.1.0 的改动：浏览器登录落地（宿主 `auth.login.start/poll` + 回环回调手动粘贴）、额度口径修正（`windowLimits` 与 `credits` 平级、新增月度窗口、`orgId` 可选）、凭据按账号命名、`/alpha` 请求自动重试、`/alpha` 抖动容错，以及注册元数据补上 `Logo`。
 
 Command Code 侧的实证事实（Provider API 形状、`/alpha/*` 用量接口、登录流程、错误信封）由官方文档、`command-code` npm 包 1.65.2 逆向与无鉴权实测交叉确认：
 
