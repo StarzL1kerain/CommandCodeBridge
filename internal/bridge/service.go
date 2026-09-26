@@ -297,12 +297,9 @@ func (s *Service) modelRegistration() any {
 			}
 			return out
 		}
+		// 只注册客户端名（映射左侧）：上游名是内部转发用的，注册它会把客户端的模型列表弄乱
+		// ——用户给模型改名正是为了区分它来自哪个渠道。
 		models = append(models, entry(m.ID, m.UpstreamID, display))
-		// 上游原名也注册一份：宿主按"客户端请求的模型名"找凭据，只注册一个名字时，
-		// 客户端直接用上游名会被判成 no auth available（503）。
-		if upstream := strings.TrimSpace(m.UpstreamID); upstream != "" && upstream != m.ID {
-			models = append(models, entry(upstream, upstream, upstream))
-		}
 	}
 	return map[string]any{"Provider": Provider, "Models": models}
 }

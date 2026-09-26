@@ -197,7 +197,21 @@ docker build --platform linux/amd64 -f Dockerfile.build --output type=local,dest
 
 ## 版本与开发记录
 
-本文档描述 **v0.1.4** 的功能集。
+**构建与部署（踩过的坑）**：宿主的插件格式是 **c-shared**，不是 Go 原生的 `plugin`：
+
+```bash
+go build -trimpath -buildmode=c-shared -ldflags="-s -w" -o commandcodebridge.so ./cmd/codecbridge
+```
+
+用 `-buildmode=plugin` 编出来的 `.so` 会让宿主在加载时 panic（表现是 CPA 起来后 API 完全不响应）。
+编译用的 Go 版本最好与宿主一致（本文档按宿主 `go1.26.4` 验证，插件用 `go1.26.0` 编可正常工作）。
+部署后必须重启宿主（`systemctl --user restart cliproxyapi.service`），再在客户端重新拉一次模型列表。
+
+本文档描述 **v0.1.5** 的功能集。
+
+v0.1.5 起**只注册「客户端名」一个模型条目**（映射左侧）：之前会把上游原名也注册一份，
+"1 个模型"在客户端列表里变成 2 条；而给模型改名正是为了区分它来自哪个渠道，
+多出来那个旧名字只会把列表弄乱。现在只注册左侧名字，请求到插件后再由插件换成上游名转发。
 
 v0.1.4 **让客户端经 CPA 也能拿到模型规格**，并修掉"保存映射会覆盖规格"：
 

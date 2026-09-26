@@ -21,8 +21,8 @@ func TestModelRegistrationDeclaresSpecsAndUpstreamAlias(t *testing.T) {
 		t.Fatalf("modelRegistration 返回类型异常：%#v", s.modelRegistration())
 	}
 	models, ok := reg["Models"].([]map[string]any)
-	if !ok || len(models) != 2 {
-		t.Fatalf("应同时注册「客户端名」与「上游名」两个条目，实际 %#v", reg["Models"])
+	if !ok || len(models) != 1 {
+		t.Fatalf("只应注册客户端名一个条目，实际 %#v", reg["Models"])
 	}
 	for _, m := range models {
 		if m["ContextLength"] != 1000000 {
@@ -30,10 +30,7 @@ func TestModelRegistrationDeclaresSpecsAndUpstreamAlias(t *testing.T) {
 		}
 	}
 	if models[0]["ID"] != "command-code/claude-sonnet-5" {
-		t.Fatalf("第一条应当是客户端模型名，实际 %#v", models[0]["ID"])
-	}
-	if models[1]["ID"] != "claude-sonnet-5" {
-		t.Fatalf("第二条应当是上游模型名，实际 %#v", models[1]["ID"])
+		t.Fatalf("应当是客户端模型名，实际 %#v", models[0]["ID"])
 	}
 
 	// 宿主通过 model.register 拿模型，形状必须与 model.static 一致。
