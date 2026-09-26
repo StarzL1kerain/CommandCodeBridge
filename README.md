@@ -70,8 +70,14 @@ Command Code 的鉴权只有一种形态：`Authorization: Bearer <API Key>`，k
 两条路：
 
 1. **不依赖面板**：直接 `GET /v0/management/commandcodebridge/quota`，或打开控制台页面查看。
-2. **让面板显示**：给管理面板套用插件额度补丁，卡片上即出现「点击此处刷新额度」。现成产物见 `../panel-plugin-quota/`，
-   原理与部署步骤见 [`../docs/04-管理面板-额度显示与部署.md`](../docs/04-管理面板-额度显示与部署.md)。
+2. **让面板显示**：给管理面板套用**插件额度补丁**（加一个通用适配器去接宿主的 `/quota/fetch`），
+   卡片上即出现「点击此处刷新额度」，配额管理页也会多出「插件」分组。
+   补丁与完整步骤见本仓库 [`panel-plugin-quota/`](panel-plugin-quota/README.md)。
+
+> 补丁**只改面板那个 `management.html` 静态文件，不涉及 CPA 本体**；不打它插件依然可用，只是面板上看不到额度。
+> 官方面板 v1.24.2 已实测确认没有插件分支，**更新面板解决不了**。
+> 补丁后注意两点：`disable-auto-update-panel` 必须为 `true`（否则面板自动更新会覆盖补丁），换完要硬刷新浏览器
+> （CPA 不给面板发 `Cache-Control`，普通 F5 可能无效）。
 
 补丁版面板会把 `window` token 翻译成标签，识别 `five_hour` / `weekly` / `seven_day` / `monthly`。换到 Command Code 无需再改面板。
 
@@ -99,7 +105,9 @@ plugins:
 
 内置的官方市场始终保留，`store-sources` 只是追加一个来源。加上之后在 CPA 的插件市场里搜 **CommandCodeBridge** 即可安装，安装完会自动写入 `plugins.configs.commandcodebridge`。
 
-> 这条路要求宿主机能访问 `raw.githubusercontent.com`（读 registry）与 `github.com`（下 Release 资产）。网络抖动时 `/v0/management/plugin-store` 会超时或 502 —— 用下面的手动方式即可绕开。
+> 这条路要求宿主机能访问 `raw.githubusercontent.com`（读 registry）与 `github.com`（下 Release 资产）。两种常见失败：
+> 网络抖动时 `/v0/management/plugin-store` 会超时或 502；商城解析"最新 Release"要走 GitHub API，未鉴权时**每个出口 IP 每小时只有 60 次**配额，
+> 容易撞上 `GitHub API rate limited`。这两种情况都用手动方式绕开即可；或给 CPA 配 `proxy-url` 走代理。
 
 ### 方式二：手动安装（离线，网络不稳时推荐）
 

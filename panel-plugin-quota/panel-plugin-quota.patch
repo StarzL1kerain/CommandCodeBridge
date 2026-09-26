@@ -1,0 +1,1103 @@
+diff --git a/src/features/authFiles/components/AuthFileCard.tsx b/src/features/authFiles/components/AuthFileCard.tsx
+index 1b2bc94..49d125e 100644
+--- a/src/features/authFiles/components/AuthFileCard.tsx
++++ b/src/features/authFiles/components/AuthFileCard.tsx
+@@ -1,4 +1,4 @@
+-import { useState, type CSSProperties } from 'react';
++import { useEffect, useMemo, useState, type CSSProperties } from 'react';
+ import { useTranslation } from 'react-i18next';
+ import { Button } from '@/components/ui/Button';
+ import { LoadingSpinner } from '@/components/ui/LoadingSpinner';
+@@ -16,6 +16,7 @@ import { ProviderStatusBar } from '@/components/providers/ProviderStatusBar';
+ import type { AuthFileItem } from '@/types';
+ import { statusBarDataFromRecentRequests } from '@/utils/recentRequests';
+ import { formatFileSize } from '@/utils/format';
++import { usePluginQuotaProvidersStore } from '@/stores';
+ import {
+   formatModified,
+   getAuthFileStatusMessage,
+@@ -80,6 +81,18 @@ export function AuthFileCard(props: AuthFileCardProps) {
+     onToggleSelect,
+   } = props;
+ 
++  const pluginQuotaProviders = usePluginQuotaProvidersStore((state) => state.providers);
++  const loadPluginQuotaProviders = usePluginQuotaProvidersStore((state) => state.load);
++
++  useEffect(() => {
++    void loadPluginQuotaProviders();
++  }, [loadPluginQuotaProviders]);
++
++  const pluginQuotaProviderKeys = useMemo(
++    () => new Set(Object.keys(pluginQuotaProviders)),
++    [pluginQuotaProviders]
++  );
++
+   const isRuntimeOnly = isRuntimeOnlyAuthFile(file);
+   const providerKey = normalizeProviderKey(String(file.type ?? file.provider ?? 'unknown'));
+   const isAistudio = providerKey === 'aistudio';
+@@ -89,7 +102,7 @@ export function AuthFileCard(props: AuthFileCardProps) {
+   const typeLabel = getTypeLabel(t, providerKey);
+   const typeColor = getTypeColor(providerKey, resolvedTheme);
+ 
+-  const quotaType = resolveAuthFileQuotaType(file, quotaFilterType);
++  const quotaType = resolveAuthFileQuotaType(file, quotaFilterType, pluginQuotaProviderKeys);
+   const showQuotaLayout = Boolean(quotaType) && !isRuntimeOnly && !compact;
+ 
+   const successCount = file.successCount ?? 0;
+diff --git a/src/features/authFiles/components/AuthFileQuotaSection.tsx b/src/features/authFiles/components/AuthFileQuotaSection.tsx
+index b346b57..feb38cb 100644
+--- a/src/features/authFiles/components/AuthFileQuotaSection.tsx
++++ b/src/features/authFiles/components/AuthFileQuotaSection.tsx
+@@ -50,6 +50,7 @@ export function AuthFileQuotaSection(props: AuthFileQuotaSectionProps) {
+     if (quotaType === 'devin') return state.devinQuota[cacheKey] as QuotaCardState | undefined;
+     if (quotaType === 'kimi') return state.kimiQuota[cacheKey] as QuotaCardState | undefined;
+     if (quotaType === 'meta') return state.metaQuota[cacheKey] as QuotaCardState | undefined;
++    if (quotaType === 'plugin') return state.pluginQuota[cacheKey] as QuotaCardState | undefined;
+     if (quotaType === 'xai') return state.xaiQuota[cacheKey] as QuotaCardState | undefined;
+     return assertNever(quotaType);
+   });
+diff --git a/src/features/authFiles/constants.ts b/src/features/authFiles/constants.ts
+index a584a12..7893849 100644
+--- a/src/features/authFiles/constants.ts
++++ b/src/features/authFiles/constants.ts
+@@ -28,7 +28,7 @@ export type AuthFileModelItem = {
+ export type AuthFileIconAsset = string | { light: string; dark: string };
+ 
+ export type QuotaProviderType =
+-  'antigravity' | 'claude' | 'codex' | 'devin' | 'kimi' | 'xai' | 'meta';
++  'antigravity' | 'claude' | 'codex' | 'devin' | 'kimi' | 'xai' | 'meta' | 'plugin';
+ export type AuthFileQuotaFilter = QuotaProviderType | 'all' | null;
+ export type OAuthConfigLoadError = 'loading' | 'unsupported' | 'load' | null;
+ 
+diff --git a/src/features/authFiles/logic.ts b/src/features/authFiles/logic.ts
+index 0bebda3..4649e3e 100644
+--- a/src/features/authFiles/logic.ts
++++ b/src/features/authFiles/logic.ts
+@@ -23,18 +23,29 @@ export const buildWildcardSearch = (value: string): RegExp | null => {
+   return new RegExp(pattern, 'i');
+ };
+ 
+-/** “全部”展示每张受支持卡片自己的额度；指定提供商时只展示匹配的额度。 */
++/**
++ * “全部”展示每张受支持卡片自己的额度；指定提供商时只展示匹配的额度。
++ *
++ * 内置 7 家有各自的适配器；插件提供方由宿主动态注册（`quota/providers`），
++ * 统一归入通用 `plugin` 适配器。缺少发现结果时插件凭证不展示额度。
++ */
+ export const resolveAuthFileQuotaType = (
+   file: AuthFileItem,
+-  filter: AuthFileQuotaFilter
++  filter: AuthFileQuotaFilter,
++  pluginProviders?: ReadonlySet<string>
+ ): QuotaProviderType | null => {
+   if (!filter) return null;
+ 
+   const provider = resolveAuthProvider(file);
+-  if (!QUOTA_PROVIDER_TYPES.has(provider as QuotaProviderType)) return null;
+-  if (filter !== 'all' && provider !== filter) return null;
++  const isBuiltin = QUOTA_PROVIDER_TYPES.has(provider as QuotaProviderType);
++  const isPlugin = !isBuiltin && Boolean(pluginProviders?.has(provider));
++  if (!isBuiltin && !isPlugin) return null;
++
++  const quotaType: QuotaProviderType = isBuiltin ? (provider as QuotaProviderType) : 'plugin';
++  // 提供商 tab 的取值是原始 provider key；插件凭证额外允许命中通用 `plugin` tab。
++  if (filter !== 'all' && filter !== provider && filter !== quotaType) return null;
+ 
+-  return provider as QuotaProviderType;
++  return quotaType;
+ };
+ 
+ /**
+diff --git a/src/features/quota/QuotaPage.tsx b/src/features/quota/QuotaPage.tsx
+index 1bd1570..2555cf9 100644
+--- a/src/features/quota/QuotaPage.tsx
++++ b/src/features/quota/QuotaPage.tsx
+@@ -19,7 +19,12 @@ import { Skeleton } from '@/components/ui/Skeleton';
+ import { useHeaderRefresh } from '@/hooks/useHeaderRefresh';
+ import { useNow } from '@/hooks/useNow';
+ import { useRevealGroup } from '@/hooks/motion';
+-import { useAuthStore, useQuotaStore, useThemeStore } from '@/stores';
++import {
++  useAuthStore,
++  usePluginQuotaProvidersStore,
++  useQuotaStore,
++  useThemeStore,
++} from '@/stores';
+ import type { AuthFileItem, ResolvedTheme } from '@/types';
+ import { getQuotaCacheKey } from '@/utils/quota/identity';
+ import { ProviderTabs } from '@/features/authFiles/components/ProviderTabs';
+@@ -132,8 +137,22 @@ export function QuotaPage() {
+   const devinQuota = useQuotaStore((state) => state.devinQuota);
+   const kimiQuota = useQuotaStore((state) => state.kimiQuota);
+   const metaQuota = useQuotaStore((state) => state.metaQuota);
++  const pluginQuota = useQuotaStore((state) => state.pluginQuota);
+   const xaiQuota = useQuotaStore((state) => state.xaiQuota);
+ 
++  // 插件提供方清单：决定哪些凭证归入通用 `plugin` 分组。
++  const pluginQuotaProviders = usePluginQuotaProvidersStore((state) => state.providers);
++  const loadPluginQuotaProviders = usePluginQuotaProvidersStore((state) => state.load);
++
++  useEffect(() => {
++    void loadPluginQuotaProviders();
++  }, [loadPluginQuotaProviders]);
++
++  const pluginQuotaProviderKeys = useMemo(
++    () => new Set(Object.keys(pluginQuotaProviders)),
++    [pluginQuotaProviders]
++  );
++
+   const quotaByType = useMemo<Record<QuotaProviderType, Record<string, QuotaCardState>>>(
+     () =>
+       ({
+@@ -143,9 +162,19 @@ export function QuotaPage() {
+         devin: devinQuota,
+         kimi: kimiQuota,
+         meta: metaQuota,
++        plugin: pluginQuota,
+         xai: xaiQuota,
+       }) as unknown as Record<QuotaProviderType, Record<string, QuotaCardState>>,
+-    [antigravityQuota, claudeQuota, codexQuota, devinQuota, kimiQuota, metaQuota, xaiQuota]
++    [
++      antigravityQuota,
++      claudeQuota,
++      codexQuota,
++      devinQuota,
++      kimiQuota,
++      metaQuota,
++      pluginQuota,
++      xaiQuota,
++    ]
+   );
+ 
+   const getQuota = useCallback(
+@@ -161,7 +190,10 @@ export function QuotaPage() {
+   const tick = useNow(sortMode !== 'default');
+   const sortNow = sortMode === 'default' ? 0 : tick;
+ 
+-  const entries = useMemo(() => classifyQuotaFiles(files), [files]);
++  const entries = useMemo(
++    () => classifyQuotaFiles(files, pluginQuotaProviderKeys),
++    [files, pluginQuotaProviderKeys]
++  );
+   const tabCounts = useMemo(() => buildTabCounts(entries), [entries]);
+   const filteredEntries = useMemo(
+     () => filterEntriesBySearch(filterEntriesByTab(entries, tab), search),
+diff --git a/src/features/quota/constants.ts b/src/features/quota/constants.ts
+index b5252af..dab303e 100644
+--- a/src/features/quota/constants.ts
++++ b/src/features/quota/constants.ts
+@@ -9,6 +9,7 @@ export const QUOTA_TAB_ORDER: readonly QuotaProviderType[] = [
+   'kimi',
+   'devin',
+   'meta',
++  'plugin',
+ ];
+ 
+ export type QuotaTabId = 'all' | QuotaProviderType;
+diff --git a/src/features/quota/logic.ts b/src/features/quota/logic.ts
+index 0420d45..07f627a 100644
+--- a/src/features/quota/logic.ts
++++ b/src/features/quota/logic.ts
+@@ -4,6 +4,7 @@
+  */
+ 
+ import type { AuthFileItem } from '@/types';
++import { resolveAuthProvider } from '@/utils/quota';
+ import { ANTIGRAVITY_CONFIG } from './providers/antigravity/data';
+ import { CLAUDE_CONFIG } from './providers/claude/data';
+ import { CODEX_CONFIG } from './providers/codex/data';
+@@ -14,7 +15,10 @@ import { XAI_CONFIG } from './providers/xai/data';
+ import type { QuotaProviderType } from './providers/types';
+ import { QUOTA_TAB_ORDER, type QuotaSortMode, type QuotaTabId } from './constants';
+ 
+-const QUOTA_FILTER_MAP: Record<QuotaProviderType, (file: AuthFileItem) => boolean> = {
++/** 内置 provider 各有筛选谓词；插件提供方只能在运行时判定，见 resolveQuotaProviderType。 */
++type BuiltinQuotaProviderType = Exclude<QuotaProviderType, 'plugin'>;
++
++const BUILTIN_FILTER_MAP: Record<BuiltinQuotaProviderType, (file: AuthFileItem) => boolean> = {
+   antigravity: ANTIGRAVITY_CONFIG.filterFn,
+   claude: CLAUDE_CONFIG.filterFn,
+   codex: CODEX_CONFIG.filterFn,
+@@ -24,6 +28,10 @@ const QUOTA_FILTER_MAP: Record<QuotaProviderType, (file: AuthFileItem) => boolea
+   xai: XAI_CONFIG.filterFn,
+ };
+ 
++const BUILTIN_TAB_ORDER = QUOTA_TAB_ORDER.filter(
++  (type): type is BuiltinQuotaProviderType => type !== 'plugin'
++);
++
+ export interface QuotaFileEntry {
+   file: AuthFileItem;
+   type: QuotaProviderType;
+@@ -42,19 +50,31 @@ export function canRefreshQuotaAfterList(
+   );
+ }
+ 
+-export const resolveQuotaProviderType = (file: AuthFileItem): QuotaProviderType | null =>
+-  QUOTA_TAB_ORDER.find((type) => QUOTA_FILTER_MAP[type](file)) ?? null;
++export const resolveQuotaProviderType = (
++  file: AuthFileItem,
++  pluginProviders?: ReadonlySet<string>
++): QuotaProviderType | null => {
++  const builtin = BUILTIN_TAB_ORDER.find((type) => BUILTIN_FILTER_MAP[type](file));
++  if (builtin) return builtin;
++
++  // 插件提供方由宿主动态注册，只在发现结果命中时归类；否则会把所有非内置
++  // 凭证都吞进通用分支。
++  return pluginProviders?.has(resolveAuthProvider(file)) ? 'plugin' : null;
++};
+ 
+ /**
+  * 把文件列表归类为额度条目：不支持额度或已停用的文件被过滤，
+  * 结果按 QUOTA_TAB_ORDER 分组排列（'全部' tab 的卡片顺序即由此决定）。
+  */
+-export function classifyQuotaFiles(files: AuthFileItem[]): QuotaFileEntry[] {
++export function classifyQuotaFiles(
++  files: AuthFileItem[],
++  pluginProviders?: ReadonlySet<string>
++): QuotaFileEntry[] {
+   const groups = new Map<QuotaProviderType, QuotaFileEntry[]>(
+     QUOTA_TAB_ORDER.map((type) => [type, []])
+   );
+   for (const file of files) {
+-    const type = resolveQuotaProviderType(file);
++    const type = resolveQuotaProviderType(file, pluginProviders);
+     if (!type) continue;
+     groups.get(type)?.push({ file, type });
+   }
+diff --git a/src/features/quota/providers/index.ts b/src/features/quota/providers/index.ts
+index 796915a..38214a3 100644
+--- a/src/features/quota/providers/index.ts
++++ b/src/features/quota/providers/index.ts
+@@ -23,6 +23,8 @@ import { META_CONFIG } from './meta/data';
+ import { MetaQuotaBody } from './meta/MetaQuotaBody';
+ import { KIMI_CONFIG } from './kimi/data';
+ import { KimiQuotaBody } from './kimi/KimiQuotaBody';
++import { PLUGIN_CONFIG } from './plugin/data';
++import { PluginQuotaBody } from './plugin/PluginQuotaBody';
+ import { XAI_CONFIG } from './xai/data';
+ import { XaiQuotaBody } from './xai/XaiQuotaBody';
+ 
+@@ -58,6 +60,7 @@ export const QUOTA_ADAPTERS: Record<QuotaProviderType, QuotaAdapter> = {
+   devin: { ...DEVIN_CONFIG, Body: DevinQuotaBody } as unknown as QuotaAdapter,
+   kimi: { ...KIMI_CONFIG, Body: KimiQuotaBody } as unknown as QuotaAdapter,
+   meta: { ...META_CONFIG, Body: MetaQuotaBody } as unknown as QuotaAdapter,
++  plugin: { ...PLUGIN_CONFIG, Body: PluginQuotaBody } as unknown as QuotaAdapter,
+   xai: { ...XAI_CONFIG, Body: XaiQuotaBody } as unknown as QuotaAdapter,
+ };
+ 
+diff --git b/src/features/quota/providers/plugin/PluginQuotaBody.tsx b/src/features/quota/providers/plugin/PluginQuotaBody.tsx
+new file mode 100644
+index 0000000..aa5a2bc
+--- /dev/null
++++ b/src/features/quota/providers/plugin/PluginQuotaBody.tsx
+@@ -0,0 +1,136 @@
++import { useMemo } from 'react';
++import { useTranslation } from 'react-i18next';
++import type { PluginQuotaMetric, PluginQuotaState } from '@/types';
++import { useNow } from '@/hooks/useNow';
++import { buildResetDisplay, parseIsoToMs } from '@/utils/quota';
++import { QuotaMeter } from '../../components/QuotaMeter';
++import { QuotaResetLabel } from '../../components/QuotaResetLabel';
++import { collectQuotaRowInstants, pickUrgentRowId } from '../../resetSchedule';
++import type { QuotaBodyProps } from '../../types';
++
++/** 宿主原样透传窗口 token，这里只翻译已收录的几个，其余原样展示。 */
++const WINDOW_LABEL_KEYS: Record<string, string> = {
++  five_hour: 'plugin_quota.window_five_hour',
++  weekly: 'plugin_quota.window_weekly',
++  seven_day: 'plugin_quota.window_seven_day',
++  monthly: 'plugin_quota.window_monthly',
++};
++
++const formatMetricValue = (metric: PluginQuotaMetric): string => {
++  if (metric.format === 'currency') {
++    const currency = metric.currency || 'USD';
++    try {
++      return new Intl.NumberFormat(undefined, { style: 'currency', currency }).format(metric.value);
++    } catch {
++      // 非 ISO 4217 代码会让 Intl 抛错，退回可读文本而不是整块失败。
++      return `${metric.value} ${currency}`;
++    }
++  }
++  const rounded = Math.round(metric.value * 100) / 100;
++  return metric.unit ? `${rounded} ${metric.unit}` : String(rounded);
++};
++
++/**
++ * 通用插件额度渲染体：只依赖宿主规范化的 groups/buckets/summary 形状，
++ * 因此任何实现 `quota_provider` 的插件都能复用。
++ */
++export function PluginQuotaBody({ quota, classes }: QuotaBodyProps<PluginQuotaState>) {
++  const { t, i18n } = useTranslation();
++  const now = useNow();
++  const data = quota.data;
++
++  const soonestRowId = useMemo(
++    () => pickUrgentRowId(collectQuotaRowInstants('plugin', quota), now),
++    [quota, now]
++  );
++
++  const rows = useMemo(
++    () =>
++      (data?.groups ?? []).flatMap((group, groupIndex) =>
++        group.buckets.map((bucket, index) => ({
++          key: `${groupIndex}-${bucket.window}-${index}`,
++          rowId: bucket.window,
++          labelKey: WINDOW_LABEL_KEYS[bucket.window],
++          fallbackLabel: bucket.window,
++          bucket,
++        }))
++      ),
++    [data]
++  );
++
++  if (!data || rows.length === 0) {
++    return <div className={classes.quotaMessage}>{t('plugin_quota.empty_data')}</div>;
++  }
++
++  const subscription = data.subscription;
++  const showChips = Boolean(subscription?.plan || subscription?.tierName || data.summary.length > 0);
++
++  return (
++    <>
++      {showChips && (
++        <div className={classes.codexPlan}>
++          {subscription?.plan && (
++            <span className={classes.codexPlanItem}>
++              <span className={classes.codexPlanLabel}>{t('plugin_quota.plan')}</span>
++              <span className={classes.codexPlanValue}>{subscription.plan}</span>
++            </span>
++          )}
++          {subscription?.tierName && (
++            <span className={classes.codexPlanItem}>
++              <span className={classes.codexPlanLabel}>{t('plugin_quota.tier')}</span>
++              <span className={classes.codexPlanValue}>{subscription.tierName}</span>
++            </span>
++          )}
++          {data.summary.map((metric) => (
++            <span key={metric.key} className={classes.codexPlanItem}>
++              <span className={classes.codexPlanLabel}>{metric.label}</span>
++              <span className={classes.codexPlanValue}>{formatMetricValue(metric)}</span>
++            </span>
++          ))}
++        </div>
++      )}
++      {rows.map((row, index) => {
++        const remaining = row.bucket.remainingFraction * 100;
++        const resetDisplay = buildResetDisplay(
++          null,
++          parseIsoToMs(row.bucket.resetTime),
++          now,
++          i18n.resolvedLanguage
++        );
++        const label = row.labelKey ? t(row.labelKey) : row.fallbackLabel;
++
++        return (
++          <div key={row.key} className={classes.quotaRow}>
++            <div className={classes.quotaRowHeader}>
++              <span className={classes.quotaModel}>{label}</span>
++              <div className={classes.quotaMeta}>
++                <span className={classes.quotaPercent}>
++                  {t('plugin_quota.remaining', { percent: Number(remaining.toFixed(1)) })}
++                </span>
++                {resetDisplay && (
++                  <QuotaResetLabel
++                    display={resetDisplay}
++                    classes={classes}
++                    soon={row.rowId === soonestRowId}
++                  />
++                )}
++              </div>
++            </div>
++            <div
++              role="meter"
++              aria-label={label}
++              aria-valuemin={0}
++              aria-valuemax={100}
++              aria-valuenow={remaining}
++            >
++              <QuotaMeter percent={remaining} classes={classes} index={index} />
++            </div>
++            {row.bucket.description && (
++              <div className={classes.quotaMessage}>{row.bucket.description}</div>
++            )}
++          </div>
++        );
++      })}
++    </>
++  );
++}
+diff --git b/src/features/quota/providers/plugin/data.ts b/src/features/quota/providers/plugin/data.ts
+new file mode 100644
+index 0000000..c507fca
+--- /dev/null
++++ b/src/features/quota/providers/plugin/data.ts
+@@ -0,0 +1,44 @@
++/**
++ * 插件额度数据层：统一走宿主的通用额度端点，不直连厂商 API。
++ *
++ * 这条路径与其余 7 家的区别在于「谁去问上游」：内置 provider 由面板借宿主的
++ * api-call 代理直连厂商接口，插件 provider 由宿主转交给对应插件。因此插件新增
++ * provider 时面板无需改动。
++ *
++ * React-free / SCSS-free —— 由 tests/pluginQuota.test.ts 直接消费。
++ */
++
++import type { TFunction } from 'i18next';
++import type { AuthFileItem, PluginQuotaData, PluginQuotaState } from '@/types';
++import { quotaApi } from '@/services/api';
++import { normalizeAuthIndex } from '@/utils/authIndex';
++import { isDisabledAuthFile } from '@/utils/quota';
++import type { QuotaProviderData } from '../types';
++
++const fetchPluginQuota = async (file: AuthFileItem, t: TFunction): Promise<PluginQuotaData> => {
++  const authIndex = normalizeAuthIndex(file['auth_index'] ?? file.authIndex);
++  if (!authIndex) {
++    throw new Error(t('plugin_quota.missing_auth_index'));
++  }
++
++  // provider 与 plugin_id 都由宿主按 auth_index 解析，面板不需要知道归属。
++  return quotaApi.fetchForCredential(authIndex);
++};
++
++export const PLUGIN_CONFIG: QuotaProviderData<PluginQuotaState, PluginQuotaData> = {
++  type: 'plugin',
++  i18nPrefix: 'plugin_quota',
++  // 是否真的支持额度由宿主发现结果决定（见 resolveAuthFileQuotaType），
++  // 这里只排除停用凭证。
++  filterFn: (file) => !isDisabledAuthFile(file),
++  fetchQuota: fetchPluginQuota,
++  storeSelector: (state) => state.pluginQuota,
++  storeSetter: 'setPluginQuota',
++  buildLoadingState: () => ({ status: 'loading' }),
++  buildSuccessState: (data) => ({ status: 'success', data }),
++  buildErrorState: (message, status) => ({
++    status: 'error',
++    error: message,
++    errorStatus: status,
++  }),
++};
+diff --git a/src/features/quota/providers/types.ts b/src/features/quota/providers/types.ts
+index 5f9eb36..673a172 100644
+--- a/src/features/quota/providers/types.ts
++++ b/src/features/quota/providers/types.ts
+@@ -14,13 +14,18 @@ import type {
+   DevinQuotaState,
+   KimiQuotaState,
+   MetaQuotaState,
++  PluginQuotaState,
+   XaiQuotaState,
+ } from '@/types';
+ 
+ export type QuotaUpdater<T> = T | ((prev: T) => T);
+ 
++/**
++ * `plugin` 是宿主通用额度端点的兜底适配器：任何通过 `/quota/providers`
++ * 声明支持额度的插件凭证都归到这一类，不再逐个厂商手写适配器。
++ */
+ export type QuotaProviderType =
+-  'antigravity' | 'claude' | 'codex' | 'devin' | 'kimi' | 'xai' | 'meta';
++  'antigravity' | 'claude' | 'codex' | 'devin' | 'kimi' | 'xai' | 'meta' | 'plugin';
+ 
+ /** useQuotaStore 的结构契约（storeSelector/storeSetter 依赖）。 */
+ export interface QuotaStore {
+@@ -30,6 +35,7 @@ export interface QuotaStore {
+   devinQuota: Record<string, DevinQuotaState>;
+   kimiQuota: Record<string, KimiQuotaState>;
+   metaQuota: Record<string, MetaQuotaState>;
++  pluginQuota: Record<string, PluginQuotaState>;
+   xaiQuota: Record<string, XaiQuotaState>;
+   setAntigravityQuota: (updater: QuotaUpdater<Record<string, AntigravityQuotaState>>) => void;
+   setClaudeQuota: (updater: QuotaUpdater<Record<string, ClaudeQuotaState>>) => void;
+@@ -37,6 +43,7 @@ export interface QuotaStore {
+   setDevinQuota: (updater: QuotaUpdater<Record<string, DevinQuotaState>>) => void;
+   setKimiQuota: (updater: QuotaUpdater<Record<string, KimiQuotaState>>) => void;
+   setMetaQuota: (updater: QuotaUpdater<Record<string, MetaQuotaState>>) => void;
++  setPluginQuota: (updater: QuotaUpdater<Record<string, PluginQuotaState>>) => void;
+   setXaiQuota: (updater: QuotaUpdater<Record<string, XaiQuotaState>>) => void;
+   clearQuotaCache: () => void;
+ }
+diff --git a/src/features/quota/resetSchedule.ts b/src/features/quota/resetSchedule.ts
+index 884468e..9f4551d 100644
+--- a/src/features/quota/resetSchedule.ts
++++ b/src/features/quota/resetSchedule.ts
+@@ -129,6 +129,22 @@ export function collectQuotaRowInstants(
+     return collectRows((quota as { rows?: WindowLike[] }).rows ?? [], 'row');
+   }
+ 
++  if (provider === 'plugin') {
++    // 插件额度的窗口都挂在 groups[].buckets[] 下，resetTime 是宿主透传的 RFC3339 字符串。
++    const buckets = (
++      quota as { data?: { groups?: { buckets?: { window?: string; resetTime?: string }[] }[] } }
++    ).data?.groups?.flatMap((group) => group.buckets ?? []);
++
++    return (buckets ?? [])
++      .map((bucket, index): QuotaRowInstant | null => {
++        const atMs = parseIsoToMs(bucket.resetTime);
++        return atMs === null
++          ? null
++          : { rowId: bucket.window || `bucket-${index}`, atMs, kind: 'window' };
++      })
++      .filter((instant): instant is QuotaRowInstant => instant !== null);
++  }
++
+   if (provider === 'meta') {
+     const windows =
+       (
+diff --git a/src/i18n/locales/en.json b/src/i18n/locales/en.json
+index 2412979..e7f0070 100644
+--- a/src/i18n/locales/en.json
++++ b/src/i18n/locales/en.json
+@@ -327,6 +327,7 @@
+     "filter_codex": "Codex",
+     "filter_meta": "Muse (Meta)",
+     "filter_devin": "Devin",
++    "filter_plugin": "Plugin",
+     "filter_antigravity": "Antigravity",
+     "filter_xai": "xAI",
+     "filter_iflow": "iFlow",
+@@ -527,6 +528,23 @@
+     "empty_title": "No Devin credentials",
+     "empty_desc": "Upload a Devin credential file or sign in using the backend CLI to query quota."
+   },
++  "plugin_quota": {
++    "title": "Plugin Quota",
++    "empty_title": "No plugin credentials with quota",
++    "empty_desc": "This provider exposes no quota, or the host registered no quota provider for it.",
++    "idle": "Click to refresh quota",
++    "loading": "Loading quota…",
++    "load_failed": "Failed to fetch quota: {{message}}",
++    "missing_auth_index": "Credential is missing auth_index",
++    "empty_data": "No quota data",
++    "plan": "Plan",
++    "tier": "Tier",
++    "remaining": "{{percent}}% left",
++    "window_five_hour": "5-hour limit",
++    "window_weekly": "Weekly limit",
++    "window_seven_day": "7-day limit",
++    "window_monthly": "30-day limit"
++  },
+   "meta_quota": {
+     "title": "Muse (Meta) Quota",
+     "empty_title": "No Muse credentials",
+diff --git a/src/i18n/locales/ru.json b/src/i18n/locales/ru.json
+index e1dbace..67b735a 100644
+--- a/src/i18n/locales/ru.json
++++ b/src/i18n/locales/ru.json
+@@ -330,6 +330,7 @@
+     "filter_codex": "Codex",
+     "filter_meta": "Muse (Meta)",
+     "filter_devin": "Devin",
++    "filter_plugin": "Плагин",
+     "filter_antigravity": "Antigravity",
+     "filter_xai": "xAI",
+     "filter_iflow": "iFlow",
+@@ -530,6 +531,23 @@
+     "empty_title": "Нет учётных данных Devin",
+     "empty_desc": "Загрузите файл учётных данных Devin или войдите через CLI сервера для запроса квоты."
+   },
++  "plugin_quota": {
++    "title": "Квота плагина",
++    "empty_title": "Нет учётных данных плагина с квотой",
++    "empty_desc": "Провайдер не предоставляет квоту, или хост не зарегистрировал для него quota provider.",
++    "idle": "Нажмите, чтобы обновить квоту",
++    "loading": "Загрузка квоты…",
++    "load_failed": "Не удалось получить квоту: {{message}}",
++    "missing_auth_index": "В учётных данных отсутствует auth_index",
++    "empty_data": "Нет данных о квоте",
++    "plan": "Тариф",
++    "tier": "Уровень",
++    "remaining": "Осталось {{percent}}%",
++    "window_five_hour": "Лимит 5 часов",
++    "window_weekly": "Недельный лимит",
++    "window_seven_day": "Лимит 7 дней",
++    "window_monthly": "Лимит 30 дней"
++  },
+   "meta_quota": {
+     "title": "Квота Muse (Meta)",
+     "empty_title": "Нет учётных данных Muse",
+diff --git a/src/i18n/locales/zh-CN.json b/src/i18n/locales/zh-CN.json
+index bebd040..aeac6fa 100644
+--- a/src/i18n/locales/zh-CN.json
++++ b/src/i18n/locales/zh-CN.json
+@@ -325,6 +325,7 @@
+     "filter_codex": "Codex",
+     "filter_meta": "Muse (Meta)",
+     "filter_devin": "Devin",
++    "filter_plugin": "插件",
+     "filter_antigravity": "Antigravity",
+     "filter_xai": "xAI",
+     "filter_iflow": "iFlow",
+@@ -525,6 +526,23 @@
+     "empty_title": "暂无 Devin 凭据",
+     "empty_desc": "上传 Devin 凭据文件或通过后端 CLI 登录后，即可查询额度。"
+   },
++  "plugin_quota": {
++    "title": "插件额度",
++    "empty_title": "暂无可查询额度的插件凭据",
++    "empty_desc": "该提供方未声明额度能力，或宿主未为其注册额度提供方。",
++    "idle": "点击此处刷新额度",
++    "loading": "正在加载额度…",
++    "load_failed": "额度获取失败：{{message}}",
++    "missing_auth_index": "认证文件缺少 auth_index",
++    "empty_data": "暂无额度数据",
++    "plan": "套餐",
++    "tier": "档位",
++    "remaining": "剩余 {{percent}}%",
++    "window_five_hour": "5 小时限额",
++    "window_weekly": "周限额",
++    "window_seven_day": "7 天限额",
++    "window_monthly": "30 天限额"
++  },
+   "meta_quota": {
+     "title": "Muse (Meta) 额度",
+     "empty_title": "暂无 Muse 凭据",
+diff --git a/src/i18n/locales/zh-TW.json b/src/i18n/locales/zh-TW.json
+index 63efe14..58fd1e3 100644
+--- a/src/i18n/locales/zh-TW.json
++++ b/src/i18n/locales/zh-TW.json
+@@ -325,6 +325,7 @@
+     "filter_codex": "Codex",
+     "filter_meta": "Muse (Meta)",
+     "filter_devin": "Devin",
++    "filter_plugin": "外掛",
+     "filter_antigravity": "Antigravity",
+     "filter_xai": "xAI",
+     "filter_iflow": "iFlow",
+@@ -525,6 +526,23 @@
+     "empty_title": "暫無 Devin 憑證",
+     "empty_desc": "上傳 Devin 憑證檔案或透過後端 CLI 登入後，即可查詢額度。"
+   },
++  "plugin_quota": {
++    "title": "外掛額度",
++    "empty_title": "暫無可查詢額度的外掛驗證",
++    "empty_desc": "該提供方未宣告額度能力，或主機未為其註冊額度提供方。",
++    "idle": "點擊此處重新整理額度",
++    "loading": "正在載入額度…",
++    "load_failed": "額度取得失敗：{{message}}",
++    "missing_auth_index": "驗證檔案缺少 auth_index",
++    "empty_data": "暫無額度資料",
++    "plan": "方案",
++    "tier": "等級",
++    "remaining": "剩餘 {{percent}}%",
++    "window_five_hour": "5 小時限額",
++    "window_weekly": "週限額",
++    "window_seven_day": "7 天限額",
++    "window_monthly": "30 天限額"
++  },
+   "meta_quota": {
+     "title": "Muse (Meta) 額度",
+     "empty_title": "暫無 Muse 憑證",
+diff --git a/src/services/api/index.ts b/src/services/api/index.ts
+index 368e008..efdd1e1 100644
+--- a/src/services/api/index.ts
++++ b/src/services/api/index.ts
+@@ -12,6 +12,7 @@ export * from './logs';
+ export * from './version';
+ export * from './models';
+ export * from './metaQuota';
++export * from './quota';
+ export * from './plugins';
+ export * from './transformers';
+ export * from './vertex';
+diff --git b/src/services/api/quota.ts b/src/services/api/quota.ts
+new file mode 100644
+index 0000000..1177f00
+--- /dev/null
++++ b/src/services/api/quota.ts
+@@ -0,0 +1,196 @@
++/**
++ * 宿主通用额度端点（插件额度）。
++ *
++ * 与其余 quota 适配器的区别：它们直连各厂商自己的 API，这里统一走宿主的
++ * `/v0/management/quota/fetch`，由宿主去问对应插件要数据。因此插件新增
++ * provider 时面板无需改动。
++ */
++
++import { apiClient } from './client';
++import { isRecord } from '@/utils/helpers';
++import type {
++  PluginQuotaBucket,
++  PluginQuotaData,
++  PluginQuotaGroup,
++  PluginQuotaMetric,
++  PluginQuotaProvider,
++  PluginQuotaSubscription,
++} from '@/types';
++
++const asString = (value: unknown): string =>
++  value === undefined || value === null ? '' : String(value);
++
++const firstString = (...values: unknown[]): string => {
++  for (const value of values) {
++    const text = asString(value).trim();
++    if (text) return text;
++  }
++  return '';
++};
++
++const stringList = (value: unknown): string[] =>
++  Array.isArray(value) ? value.map((item) => asString(item).trim()).filter(Boolean) : [];
++
++/**
++ * provider key 可能来自 `supported_providers`（宿主聚合 QuotaDescribeResponse 的形态），
++ * 也可能直接是一个字符串条目。两种都接受，避免绑定未公开的包装结构。
++ */
++const readProviderKeys = (entry: unknown): string[] => {
++  if (typeof entry === 'string') {
++    const key = entry.trim();
++    return key ? [key] : [];
++  }
++  if (!isRecord(entry)) return [];
++
++  const listed = [
++    ...stringList(entry.supported_providers),
++    ...stringList(entry.supportedProviders),
++  ];
++  if (listed.length > 0) return listed;
++
++  const single = firstString(entry.provider, entry.identifier, entry.name);
++  return single ? [single] : [];
++};
++
++export function parsePluginQuotaProviders(payload: unknown): PluginQuotaProvider[] {
++  if (!isRecord(payload)) return [];
++  const entries = Array.isArray(payload.providers) ? payload.providers : [];
++
++  const byProvider = new Map<string, PluginQuotaProvider>();
++  entries.forEach((entry) => {
++    const keys = readProviderKeys(entry);
++    if (keys.length === 0) return;
++
++    const record = isRecord(entry) ? entry : {};
++    const displayName = firstString(record.display_name, record.displayName);
++    const supportsReset = record.supports_reset === true || record.supportsReset === true;
++
++    keys.forEach((provider) => {
++      if (byProvider.has(provider)) return;
++      byProvider.set(provider, {
++        provider,
++        ...(displayName ? { displayName } : {}),
++        ...(supportsReset ? { supportsReset } : {}),
++      });
++    });
++  });
++
++  return Array.from(byProvider.values());
++}
++
++/** 宿主契约是 0~1 的小数，这里只做区间收敛，接受数值与可解析的字符串。 */
++const parseFraction = (value: unknown): number | null => {
++  if (typeof value !== 'number' && typeof value !== 'string') return null;
++  const parsed = typeof value === 'number' ? value : Number(value.trim());
++  if (!Number.isFinite(parsed)) return null;
++  return Math.min(1, Math.max(0, parsed));
++};
++
++const parseBucket = (value: unknown): PluginQuotaBucket | null => {
++  if (!isRecord(value)) return null;
++
++  const remainingFraction = parseFraction(value.remainingFraction ?? value.remaining_fraction);
++  if (remainingFraction === null) return null;
++
++  const bucket: PluginQuotaBucket = {
++    window: firstString(value.window) || 'window',
++    remainingFraction,
++  };
++
++  const description = firstString(value.description);
++  if (description) bucket.description = description;
++
++  const resetTime = firstString(value.resetTime, value.reset_time);
++  if (resetTime) bucket.resetTime = resetTime;
++
++  return bucket;
++};
++
++const parseMetric = (value: unknown): PluginQuotaMetric | null => {
++  if (!isRecord(value)) return null;
++
++  const key = firstString(value.key);
++  const label = firstString(value.label);
++  const raw = typeof value.value === 'number' ? value.value : Number(value.value);
++  if (!key || !label || !Number.isFinite(raw)) return null;
++
++  const metric: PluginQuotaMetric = { key, label, value: raw };
++
++  const unit = firstString(value.unit);
++  if (unit) metric.unit = unit;
++
++  const format = firstString(value.format);
++  if (format === 'number' || format === 'currency') metric.format = format;
++
++  const currency = firstString(value.currency);
++  if (currency) metric.currency = currency;
++
++  return metric;
++};
++
++const parseSubscription = (value: unknown): PluginQuotaSubscription => {
++  const record = isRecord(value) ? value : {};
++  const plan = firstString(record.plan);
++  const tierName = firstString(record.tierName, record.tier_name);
++  const tierId = firstString(record.tierId, record.tier_id);
++  return {
++    ...(plan ? { plan } : {}),
++    ...(tierName ? { tierName } : {}),
++    ...(tierId ? { tierId } : {}),
++  };
++};
++
++const parseServerTimeOffsetMs = (value: unknown): number | undefined => {
++  if (typeof value === 'number' && Number.isFinite(value)) return value;
++  return undefined;
++};
++
++export function parsePluginQuotaPayload(payload: unknown): PluginQuotaData {
++  const root = isRecord(payload) ? payload : {};
++
++  const groups: PluginQuotaGroup[] = (Array.isArray(root.groups) ? root.groups : [])
++    .map((group): PluginQuotaGroup | null => {
++      if (!isRecord(group)) return null;
++      const buckets = (Array.isArray(group.buckets) ? group.buckets : [])
++        .map((bucket) => parseBucket(bucket))
++        .filter((bucket): bucket is PluginQuotaBucket => bucket !== null);
++      if (buckets.length === 0) return null;
++
++      const displayName = firstString(group.displayName, group.display_name);
++      return { ...(displayName ? { displayName } : {}), buckets };
++    })
++    .filter((group): group is PluginQuotaGroup => group !== null);
++
++  const summary: PluginQuotaMetric[] = (Array.isArray(root.summary) ? root.summary : [])
++    .map((metric) => parseMetric(metric))
++    .filter((metric): metric is PluginQuotaMetric => metric !== null);
++
++  const subscription = parseSubscription(root.subscription);
++  const serverTimeOffsetMs = parseServerTimeOffsetMs(
++    root.serverTimeOffsetMs ?? root.server_time_offset_ms
++  );
++
++  return {
++    groups,
++    summary,
++    ...(Object.keys(subscription).length > 0 ? { subscription } : {}),
++    ...(serverTimeOffsetMs === undefined ? {} : { serverTimeOffsetMs }),
++  };
++}
++
++export const quotaApi = {
++  /** 已注册的额度提供方（含插件）。provider key 用于判断某凭证能否取额度。 */
++  async listProviders(): Promise<PluginQuotaProvider[]> {
++    const data = await apiClient.get('/quota/providers');
++    return parsePluginQuotaProviders(data);
++  },
++
++  /**
++   * 按凭证取额度。provider 与 plugin_id 都由宿主按 auth_index 自行解析，
++   * 面板不需要知道凭证属于哪个插件。
++   */
++  async fetchForCredential(authIndex: string): Promise<PluginQuotaData> {
++    const data = await apiClient.post('/quota/fetch', { auth_index: authIndex });
++    return parsePluginQuotaPayload(data);
++  },
++};
+diff --git a/src/stores/index.ts b/src/stores/index.ts
+index f56b9b2..37e130f 100644
+--- a/src/stores/index.ts
++++ b/src/stores/index.ts
+@@ -13,3 +13,4 @@ export {
+   commitIfQuotaCacheCurrent,
+   useQuotaStore,
+ } from './useQuotaStore';
++export { usePluginQuotaProvidersStore } from './usePluginQuotaProvidersStore';
+diff --git b/src/stores/usePluginQuotaProvidersStore.ts b/src/stores/usePluginQuotaProvidersStore.ts
+new file mode 100644
+index 0000000..93432be
+--- /dev/null
++++ b/src/stores/usePluginQuotaProvidersStore.ts
+@@ -0,0 +1,45 @@
++/**
++ * 插件额度提供方清单（宿主 `GET /v0/management/quota/providers`）。
++ *
++ * 内置 7 家的额度分支写死在面板里，插件提供方只能在运行时发现。这里缓存一次
++ * 发现结果，供 authFiles 侧判断「这张凭证能不能取额度」，以及把它归入通用适配器。
++ */
++
++import { create } from 'zustand';
++import { quotaApi } from '@/services/api';
++import type { PluginQuotaProvider } from '@/types';
++
++interface PluginQuotaProvidersStoreState {
++  providers: Record<string, PluginQuotaProvider>;
++  loaded: boolean;
++  loading: boolean;
++  error?: string;
++  load: () => Promise<void>;
++}
++
++export const usePluginQuotaProvidersStore = create<PluginQuotaProvidersStoreState>((set, get) => ({
++  providers: {},
++  loaded: false,
++  loading: false,
++  load: async () => {
++    // 失败或空结果同样标记 loaded：宿主没有插件额度时不必每次卡片渲染都重试。
++    if (get().loading || get().loaded) return;
++
++    set({ loading: true });
++    try {
++      const list = await quotaApi.listProviders();
++      const providers: Record<string, PluginQuotaProvider> = {};
++      list.forEach((entry) => {
++        providers[entry.provider] = entry;
++      });
++      set({ providers, loaded: true, loading: false });
++    } catch (err: unknown) {
++      // 不阻塞页面：仅意味着插件额度不展示。
++      set({
++        loading: false,
++        loaded: true,
++        error: err instanceof Error ? err.message : 'unknown error',
++      });
++    }
++  },
++}));
+diff --git a/src/stores/useQuotaStore.ts b/src/stores/useQuotaStore.ts
+index 1dd1ac2..214f8f7 100644
+--- a/src/stores/useQuotaStore.ts
++++ b/src/stores/useQuotaStore.ts
+@@ -11,6 +11,7 @@ import type {
+   DevinQuotaState,
+   KimiQuotaState,
+   MetaQuotaState,
++  PluginQuotaState,
+   XaiQuotaState,
+ } from '@/types';
+ 
+@@ -25,6 +26,7 @@ interface QuotaStoreState {
+   devinQuota: Record<string, DevinQuotaState>;
+   kimiQuota: Record<string, KimiQuotaState>;
+   metaQuota: Record<string, MetaQuotaState>;
++  pluginQuota: Record<string, PluginQuotaState>;
+   xaiQuota: Record<string, XaiQuotaState>;
+   setAntigravityQuota: (updater: QuotaUpdater<Record<string, AntigravityQuotaState>>) => void;
+   setClaudeQuota: (updater: QuotaUpdater<Record<string, ClaudeQuotaState>>) => void;
+@@ -32,6 +34,7 @@ interface QuotaStoreState {
+   setDevinQuota: (updater: QuotaUpdater<Record<string, DevinQuotaState>>) => void;
+   setKimiQuota: (updater: QuotaUpdater<Record<string, KimiQuotaState>>) => void;
+   setMetaQuota: (updater: QuotaUpdater<Record<string, MetaQuotaState>>) => void;
++  setPluginQuota: (updater: QuotaUpdater<Record<string, PluginQuotaState>>) => void;
+   setXaiQuota: (updater: QuotaUpdater<Record<string, XaiQuotaState>>) => void;
+   clearQuotaCache: (names?: string[]) => void;
+ }
+@@ -52,6 +55,7 @@ export const useQuotaStore = create<QuotaStoreState>((set) => ({
+   devinQuota: {},
+   kimiQuota: {},
+   metaQuota: {},
++  pluginQuota: {},
+   xaiQuota: {},
+   setAntigravityQuota: (updater) =>
+     set((state) => ({
+@@ -75,6 +79,8 @@ export const useQuotaStore = create<QuotaStoreState>((set) => ({
+     })),
+   setMetaQuota: (updater) =>
+     set((state) => ({ metaQuota: resolveUpdater(updater, state.metaQuota) })),
++  setPluginQuota: (updater) =>
++    set((state) => ({ pluginQuota: resolveUpdater(updater, state.pluginQuota) })),
+   setXaiQuota: (updater) =>
+     set((state) => ({
+       xaiQuota: resolveUpdater(updater, state.xaiQuota),
+@@ -105,6 +111,7 @@ export const useQuotaStore = create<QuotaStoreState>((set) => ({
+           devinQuota: omitNames(state.devinQuota),
+           kimiQuota: omitNames(state.kimiQuota),
+           metaQuota: omitNames(state.metaQuota),
++          pluginQuota: omitNames(state.pluginQuota),
+           xaiQuota: omitNames(state.xaiQuota),
+         };
+       }
+@@ -117,6 +124,7 @@ export const useQuotaStore = create<QuotaStoreState>((set) => ({
+         devinQuota: {},
+         kimiQuota: {},
+         metaQuota: {},
++        pluginQuota: {},
+         xaiQuota: {},
+       };
+     }),
+diff --git a/src/types/index.ts b/src/types/index.ts
+index f1b2cd1..75c0e69 100644
+--- a/src/types/index.ts
++++ b/src/types/index.ts
+@@ -10,4 +10,5 @@ export * from './provider';
+ export * from './authFile';
+ export * from './oauth';
+ export * from './quota';
++export * from './pluginQuota';
+ export * from './plugin';
+diff --git b/src/types/pluginQuota.ts b/src/types/pluginQuota.ts
+new file mode 100644
+index 0000000..e2fc156
+--- /dev/null
++++ b/src/types/pluginQuota.ts
+@@ -0,0 +1,61 @@
++/**
++ * 插件额度（宿主通用额度端点）的展示契约。
++ *
++ * 后端契约（CLIProxyAPI `internal/api/handlers/management/plugin_quota.go`）：
++ * - `GET  /v0/management/quota/providers` → `{ providers: [...] }`
++ * - `POST /v0/management/quota/fetch`     → 直接返回 `pluginapi.QuotaFetchResponse`
++ *
++ * 上游响应可能携带凭据与 PII，这里只保留展示所需字段，禁止直接透传原始对象。
++ */
++
++/** `GET /quota/providers` 中单个提供方，已按 provider key 展平。 */
++export interface PluginQuotaProvider {
++  /** 凭证的 provider key，例如 `cline-pass`。 */
++  provider: string;
++  displayName?: string;
++  supportsReset?: boolean;
++}
++
++export interface PluginQuotaBucket {
++  /** 窗口标识，宿主原样透传（例如 `five_hour`）。 */
++  window: string;
++  /** 剩余比例，0~1 的小数（宿主契约，不是百分数）。 */
++  remainingFraction: number;
++  /** 重置时间，RFC3339 字符串（宿主不做解析）。 */
++  resetTime?: string;
++  description?: string;
++}
++
++export interface PluginQuotaGroup {
++  displayName?: string;
++  buckets: PluginQuotaBucket[];
++}
++
++export interface PluginQuotaMetric {
++  key: string;
++  label: string;
++  value: number;
++  unit?: string;
++  format?: 'number' | 'currency';
++  currency?: string;
++}
++
++export interface PluginQuotaSubscription {
++  plan?: string;
++  tierName?: string;
++  tierId?: string;
++}
++
++export interface PluginQuotaData {
++  groups: PluginQuotaGroup[];
++  summary: PluginQuotaMetric[];
++  subscription?: PluginQuotaSubscription;
++  serverTimeOffsetMs?: number;
++}
++
++export interface PluginQuotaState {
++  status: 'idle' | 'loading' | 'success' | 'error';
++  data?: PluginQuotaData;
++  error?: string;
++  errorStatus?: number;
++}
