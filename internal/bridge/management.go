@@ -374,7 +374,12 @@ func (s *Service) refreshModels(callbackID string) ([]Model, error) {
 		if modelNeedsAnthropicBy(upstreamID, supported) {
 			modelID = Provider + "/" + upstreamID
 		}
-		models = append(models, Model{ID: modelID, UpstreamID: upstreamID})
+		// 上游条目除 id 外还带 name 与 context_length，一起接住 —— 后者就是"模型规格"。
+		candidate := Model{ID: modelID, UpstreamID: upstreamID, Name: strings.TrimSpace(str(m["name"]))}
+		if f, ok := m["context_length"].(float64); ok && f > 0 {
+			candidate.ContextLength = int(f)
+		}
+		models = append(models, candidate)
 	}
 	if len(models) == 0 {
 		return nil, fail(502, "Command Code 目录未返回有效模型")
@@ -382,5 +387,29 @@ func (s *Service) refreshModels(callbackID string) ([]Model, error) {
 	s.mu.Lock()
 	s.modelEndpoints = endpoints
 	s.mu.Unlock()
+	// 已保存映射里空着的规格顺手补上（只填空值，不覆盖用户填过的），
+	// 存盘会触发宿主重新注册，于是宿主侧立刻能看到规格。
+	upstreamContext := map[string]int{}
+	for _, m := range models {
+		if m.ContextLength > 0 {
+			upstreamContext[m.UpstreamID] = m.ContextLength
+		}
+	}
+	cfg := s.config()
+	changed := false
+	for i := range cfg.Models {
+		if cfg.Models[i].ContextLength == 0 {
+			if value, ok := upstreamContext[cfg.Models[i].UpstreamID]; ok {
+				cfg.Models[i].ContextLength = value
+				changed = true
+			}
+		}
+	}
+	if changed {
+		if e := s.saveConfig(cfg); e != nil {
+			s.appendLog(LogEntry{ID: id(), Time: time.Now().UTC(), Model: "(" + PluginID + " 模型规格)", Status: 410,
+				Error: "自动补全模型规格后保存失败（已保存的映射未更新）：" + safeError(e)})
+		}
+	}
 	return models, nil
 }

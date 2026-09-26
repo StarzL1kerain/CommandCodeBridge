@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const Version = "0.1.2"
+const Version = "0.1.3"
 const Provider = "command-code"
 const PluginID = "commandcodebridge"
 
@@ -100,6 +100,11 @@ type Model struct {
 	ID         string   `json:"id" yaml:"id"`
 	UpstreamID string   `json:"upstream_id" yaml:"upstream_id"`
 	Providers  []string `json:"providers" yaml:"providers"`
+	// Name / ContextLength 来自上游目录（/provider/v1/models 实测带 name 与 context_length）。
+	// 用途是把模型规格申报给宿主：CPA 自己的模型目录只收录内置厂商，插件模型不会被自动补全，
+	// 不申报的话宿主与客户端就显示不出"模型规格"。
+	Name          string `json:"name,omitempty" yaml:"name,omitempty"`
+	ContextLength int    `json:"context_length,omitempty" yaml:"context_length,omitempty"`
 }
 type Config struct {
 	DataDir          string  `json:"data_dir" yaml:"data_dir"`

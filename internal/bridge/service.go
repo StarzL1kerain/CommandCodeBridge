@@ -174,7 +174,7 @@ func (s *Service) Handle(method string, raw json.RawMessage) (any, error) {
 		return registration(), nil
 	case "executor.identifier", "auth.identifier":
 		return map[string]any{"identifier": Provider}, nil
-	case "model.static", "model.for_auth":
+	case "model.static", "model.for_auth", "model.register":
 		return s.modelRegistration(), nil
 	case "auth.parse":
 		return s.parseAuth(raw)
@@ -268,13 +268,36 @@ func (s *Service) refreshRegistrations() error {
 }
 
 func registration() any {
-	return map[string]any{"schema_version": 6, "metadata": map[string]any{"Name": "CommandCodeBridge", "Version": Version, "Author": "StarzL1kerain", "GitHubRepository": "https://github.com/StarzL1kerain/CommandCodeBridge", "Logo": "https://raw.githubusercontent.com/StarzL1kerain/CommandCodeBridge/main/logo.png", "Description": "Command Code 订阅接入插件：支持 API key 凭据、OpenAI 兼容转发与 Claude 模型协议转换，并记录用量", "ConfigFields": []map[string]any{{"Name": "data_dir", "Type": "string", "Description": "插件状态持久化目录"}}}, "capabilities": map[string]any{"auth_provider": true, "model_provider": true, "executor": true, "executor_model_scope": "both", "executor_input_formats": []string{"chat-completions"}, "executor_output_formats": []string{"chat-completions"}, "management_api": true, "quota_provider": true}}
+	return map[string]any{"schema_version": 6, "metadata": map[string]any{"Name": "CommandCodeBridge", "Version": Version, "Author": "StarzL1kerain", "GitHubRepository": "https://github.com/StarzL1kerain/CommandCodeBridge", "Logo": "https://raw.githubusercontent.com/StarzL1kerain/CommandCodeBridge/main/logo.png", "Description": "Command Code 订阅接入插件：支持 API key 凭据、OpenAI 兼容转发与 Claude 模型协议转换，并记录用量", "ConfigFields": []map[string]any{{"Name": "data_dir", "Type": "string", "Description": "插件状态持久化目录"}}}, "capabilities": map[string]any{"auth_provider": true, "model_provider": true, "executor": true, "executor_model_scope": "both", "executor_input_formats": []string{"chat-completions"}, "executor_output_formats": []string{"chat-completions"}, "management_api": true, "quota_provider": true, "model_registrar": true}}
 }
 func (s *Service) modelRegistration() any {
 	cfg := s.config()
 	models := []map[string]any{}
 	for _, m := range cfg.Models {
-		models = append(models, map[string]any{"ID": m.ID, "Name": m.UpstreamID, "Object": "model", "OwnedBy": Provider, "DisplayName": m.ID, "SupportedGenerationMethods": []string{"chat"}, "UserDefined": true})
+		// 有上游给的名字就用它，别让面板只显示原始 id。
+		display := m.ID
+		if name := strings.TrimSpace(m.Name); name != "" {
+			display = name
+		}
+		// 规格字段：CPA 自己的模型目录只收录内置厂商，插件模型不会被自动补全，
+		// 所以上下文长度必须由插件申报，否则宿主与客户端显示不出模型规格。
+		specs := map[string]any{}
+		if m.ContextLength > 0 {
+			specs["ContextLength"] = m.ContextLength
+		}
+		entry := func(id, name, shown string) map[string]any {
+			out := map[string]any{"ID": id, "Name": name, "Object": "model", "OwnedBy": Provider, "DisplayName": shown, "SupportedGenerationMethods": []string{"chat"}, "UserDefined": true}
+			for key, value := range specs {
+				out[key] = value
+			}
+			return out
+		}
+		models = append(models, entry(m.ID, m.UpstreamID, display))
+		// 上游原名也注册一份：宿主按"客户端请求的模型名"找凭据，只注册一个名字时，
+		// 客户端直接用上游名会被判成 no auth available（503）。
+		if upstream := strings.TrimSpace(m.UpstreamID); upstream != "" && upstream != m.ID {
+			models = append(models, entry(upstream, upstream, upstream))
+		}
 	}
 	return map[string]any{"Provider": Provider, "Models": models}
 }
