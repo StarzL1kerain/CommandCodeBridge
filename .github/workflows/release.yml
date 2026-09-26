@@ -38,13 +38,18 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Test on Debian 12
+      # 在 Debian 12 容器里编译，保证产物依赖的 glibc 基线不高于 bookworm。
+      # 原来这里用 docker build（Dockerfile.build）出包，那一步依赖容器内 apt-get 与
+      # BuildKit 的 --output，容易在 CI 上失败；改成与 linux-arm64 完全相同的 docker run 方式。
+      - name: Test and build on Debian 12 amd64
+        shell: bash
         run: |
+          set -euo pipefail
+          mkdir -p dist
           docker run --rm --platform linux/amd64 -v "$PWD:/src" -w /src \
             -e CGO_ENABLED=1 -e GOOS=linux -e GOARCH=amd64 \
-            golang:1.26-bookworm go test ./internal/bridge
-      - name: Build Debian 12 shared library
-        run: docker build --platform linux/amd64 --file Dockerfile.build --output type=local,dest=dist .
+            golang:1.26-bookworm sh -ec \
+            'go test ./internal/bridge && go build -trimpath -buildvcs=false -buildmode=c-shared -ldflags="-s -w" -o dist/commandcodebridge.so ./cmd/codecbridge'
       - name: Package Linux amd64
         shell: bash
         run: |
