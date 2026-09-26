@@ -94,7 +94,29 @@ func (s *Service) management(raw json.RawMessage) (any, error) {
 		if in.Models == nil {
 			return managementJSON(400, map[string]any{"error": "models 必须是数组"})
 		}
-		cfg.Models = *in.Models
+		// 保留已有的元数据与规格（name/context_length）：前端保存时可能只回传 id 与 upstream_id
+		// （例如它拿的是"刷新自动补规格之前"的快照），不保留的话刚补好的规格会被覆盖掉。
+		previous := map[string]Model{}
+		for _, m := range cfg.Models {
+			previous[m.UpstreamID] = m
+		}
+		next := *in.Models
+		for i := range next {
+			old, ok := previous[next[i].UpstreamID]
+			if !ok {
+				continue
+			}
+			if next[i].Name == "" {
+				next[i].Name = old.Name
+			}
+			if next[i].ContextLength == 0 {
+				next[i].ContextLength = old.ContextLength
+			}
+			if len(next[i].Providers) == 0 {
+				next[i].Providers = old.Providers
+			}
+		}
+		cfg.Models = next
 		if e := s.saveConfig(cfg); e != nil {
 			return managementJSON(statusOf(e), map[string]any{"error": safeError(e)})
 		}
@@ -384,8 +406,16 @@ func (s *Service) refreshModels(callbackID string) ([]Model, error) {
 	if len(models) == 0 {
 		return nil, fail(502, "Command Code 目录未返回有效模型")
 	}
+	// 目录里带 context_length，缓存下来供 /v1/models 拦截器补规格用。
+	contexts := map[string]int{}
+	for _, m := range models {
+		if m.ContextLength > 0 {
+			contexts[tailName(m.UpstreamID)] = m.ContextLength
+		}
+	}
 	s.mu.Lock()
 	s.modelEndpoints = endpoints
+	s.modelSpecs = contexts
 	s.mu.Unlock()
 	// 已保存映射里空着的规格顺手补上（只填空值，不覆盖用户填过的），
 	// 存盘会触发宿主重新注册，于是宿主侧立刻能看到规格。

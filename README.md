@@ -197,7 +197,20 @@ docker build --platform linux/amd64 -f Dockerfile.build --output type=local,dest
 
 ## 版本与开发记录
 
-本文档描述 **v0.1.3** 的功能集。
+本文档描述 **v0.1.4** 的功能集。
+
+v0.1.4 **让客户端经 CPA 也能拿到模型规格**，并修掉"保存映射会覆盖规格"：
+
+- 读宿主源码确认：`/v1/models` 的处理器（`sdk/api/handlers/openai/openai_handlers.go`）
+  **写死了"只保留 4 个必需字段"**（`id/object/created/owned_by`）→ 客户端经 CPA 看不到
+  上下文长度（只能看到自己的默认值），而直连厂商时能看到。
+- 宿主会把模型列表响应体交给插件拦截器（`response.intercept_after`），于是插件在那里补回
+  **`context_length`**：只处理 `{"object":"list","data":[…]}` 形状，只补缺失字段；
+  除了自己注册的模型，还会按"名字最后一段"命中**目录缓存**（覆盖同一个模型走 CPA 内置
+  OpenAI 兼容路由接入的情况）。其它响应（尤其对话响应）一律原样返回 —— 有单测覆盖。
+- `PUT /models` 现在保留已有条目的 `name` / `context_length`（前端可能只回传 id 与 upstream_id，
+  不保留的话刚自动补好的规格会被覆盖）。
+- **CPA 本体一行未改。**
 
 v0.1.3 申报**模型规格**，并把上游原名也注册成可用模型名：
 
