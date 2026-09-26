@@ -15,6 +15,14 @@ CommandCodeBridge 是 [CLIProxyAPI (CPA)](https://github.com/router-for-me/CLIPr
 
 Command Code 的鉴权只有一种形态：`Authorization: Bearer <API Key>`，key 长期有效，`auth.refresh` 永远返回静态时间。
 
+拿到 key 有两种方式，任选其一：
+
+1. **直接粘**：在 [commandcode.ai](https://commandcode.ai/) 的 Studio（或用本机 CLI 的 `cmd login`）生成一把长期 key，
+   到插件控制台「添加凭据」粘贴 —— 导入时先用 `GET /alpha/whoami` 校验，无效 key 直接拒收，
+   通过后按 whoami 返回的账号信息给凭据命名。
+2. **浏览器登录**：由插件代你把 key 取回来（见下面那节）。它**不是 OAuth** —— Command Code 没有账号令牌那一套，
+   登录只是获取 key 的途径之一。
+
 官方 CLI 的浏览器登录（`https://commandcode.ai/studio/auth/cli`）依赖在本地起 loopback 回调端口接收 key。**授权页只接受 localhost 回调**——callback 填别的地址会直接报 `Invalid Request ... Only localhost URLs are allowed for security`（实证），因此不能指向插件控制台或 CPA 面板；而插件跑在服务器进程里，也监听不了用户本机的端口。于是登录固定走「回环回调 + 复制粘贴」：
 
 1. 发起登录后浏览器打开 `https://commandcode.ai/studio/auth/cli?callback=http://127.0.0.1:41017/callback&mode=redirect&state=…`，确认授权。
